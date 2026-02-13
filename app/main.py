@@ -1,0 +1,1789 @@
+"""
+FastAPI app: login a Salchi Monster Restaurant con Chromium,
+credenciales en JSON local y cookies de sesión.
+"""
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import queue
+import re
+import sys
+import traceback
+from pathlib import Path
+from typing import Any
+
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:
+    ZoneInfo = None  # type: ignore
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logger = logging.getLogger("restaurant_scraper")
+
+# Asegurar que el proyecto root esté en el path (funciona aunque uvicorn se ejecute desde otra carpeta)
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
+from datetime import datetime, timedelta
+from urllib.parse import urlencode
+
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, File, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse
+from pydantic import BaseModel
+
+from app.config import (
+    CREDENTIALS_FILE,
+    COOKIES_FILE,
+    TOKEN_FILE,
+    LOGIN_URL,
+    LOGIN_API_URL,
+    REPORT_URL,
+    LOCALES_API_URL,
+    REPORTS_DIR,
+    REPORTS_LOCALES_JSON,
+    REPORTS_CANALES_DELIVERY_JSON,
+    DELIVERY_API_BASE,
+    DELIVERYS_CACHE_DIR,
+    UPLOADS_DIR,
+    NO_ENTREGADAS_JSON,
+    HORARIOS_JSON,
+)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Ya no se usa el reporte Excel automático; datos desde API deliverys cada 5 min
+    # Locales desde API cada 10 min; primera carga al arranque
+    locales_task = asyncio.create_task(_locales_scheduler_loop())
+    asyncio.create_task(_fetch_and_save_locales())  # primera vez sin esperar
+    logger.info("Locales scheduler: iniciado (cada 10 min)")
+    # Migrar deliverys antiguos (un archivo por local) a estructura por fecha
+    try:
+        _migrate_old_deliverys_to_per_date()
+    except Exception as e:
+        logger.warning("Migración deliverys: %s", e)
+    # Deliverys por local cada 2 min (obtenerDeliverysPorLocalSimple; 5 s entre cada sede)
+    deliverys_task = asyncio.create_task(_deliverys_scheduler_loop())
+    logger.info("Deliverys scheduler: iniciado (cada 2 min, fecha hoy; 5 s entre sedes)")
+    # Login cada 12 h para renovar sesión
+    login_refresh_task = asyncio.create_task(_login_refresh_loop())
+    logger.info("Login refresh: iniciado (cada 12 h)")
+    yield
+    locales_task.cancel()
+    deliverys_task.cancel()
+    login_refresh_task.cancel()
+    try:
+        await locales_task
+    except asyncio.CancelledError:
+        pass
+    try:
+        await deliverys_task
+    except asyncio.CancelledError:
+        pass
+    try:
+        await login_refresh_task
+    except asyncio.CancelledError:
+        pass
+
+
+app = FastAPI(
+    title="Restaurant Scraper Login",
+    description="Login con Chromium a salchimonster.restaurant.pe",
+    lifespan=lifespan,
+)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# --- Credenciales ---
+
+def _read_json(path: Path, default: dict | list) -> dict | list:
+    if not path.exists():
+        return default
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, IOError):
+        return default
+
+
+def _write_json(path: Path, data: dict | list) -> None:
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+
+
+def get_credentials() -> dict[str, Any]:
+    data = _read_json(CREDENTIALS_FILE, {})
+    if not data:
+        raise HTTPException(status_code=503, detail="No hay credenciales. Usa PUT /credentials para configurarlas.")
+    return data
+
+
+def save_credentials(data: dict[str, Any]) -> dict[str, Any]:
+    CREDENTIALS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    _write_json(CREDENTIALS_FILE, data)
+    return data
+
+
+def get_cookies() -> list[dict]:
+    return _read_json(COOKIES_FILE, [])
+
+
+def save_cookies(cookies: list[dict]) -> None:
+    COOKIES_FILE.parent.mkdir(parents=True, exist_ok=True)
+    _write_json(COOKIES_FILE, cookies)
+
+
+def get_token() -> str | None:
+    """Devuelve el token guardado (data.token del login) o None."""
+    data = _read_json(TOKEN_FILE, {})
+    if isinstance(data, dict):
+        return data.get("token")
+    return None
+
+
+def save_token(token: str | None) -> None:
+    """Guarda el token del login en token.json."""
+    if not token:
+        return
+    TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
+    from datetime import datetime
+    _write_json(TOKEN_FILE, {"token": token, "updated_at": datetime.utcnow().isoformat() + "Z"})
+
+
+# --- Pydantic models ---
+
+class CredentialsUpdate(BaseModel):
+    usuario_nick: str | None = None
+    usuario_clave: str | None = None
+    usuario_recordar: str | None = None
+    local_id: str | None = None
+    turno_id: str | None = None
+    caja_id: str | None = None
+    app: str | None = None
+
+
+def _clean_server_error_message(raw: str) -> str:
+    """Convierte HTML/errores del servidor (ej. Slim PHP) en un mensaje corto y legible."""
+    if not raw or not isinstance(raw, str):
+        return "Error desconocido del servidor"
+    raw = raw.strip()
+    # Es una página de error HTML (Slim, etc.)
+    if "<html" in raw.lower() or "slim application error" in raw.lower() or "application error" in raw.lower():
+        # Extraer el mensaje después de "Message:</strong>" o "Details" (ej. get_object_vars()...)
+        m = re.search(r"<strong>\s*Message:\s*</strong>\s*([^<]+)", raw, re.IGNORECASE | re.DOTALL)
+        if m:
+            detail = m.group(1).strip()
+            detail = re.sub(r"\s+", " ", detail)[:200]
+            # Mensaje más amigable para el error típico del PHP del restaurante
+            if "get_object_vars" in detail and "null given" in detail:
+                return (
+                    "El servidor del restaurante falló al procesar el login (error interno). "
+                    "Comprueba que usuario y clave sean correctos. Si sigue fallando, usa «Probar login por formulario»."
+                )
+            return f"Error del servidor del restaurante: {detail}"
+        m = re.search(r"<strong>\s*Details:\s*</strong>\s*([^<]+)", raw, re.IGNORECASE | re.DOTALL)
+        if m:
+            detail = m.group(1).strip()
+            detail = re.sub(r"\s+", " ", detail)[:200]
+            if "get_object_vars" in detail and "null given" in detail:
+                return (
+                    "El servidor del restaurante falló al procesar el login (error interno). "
+                    "Comprueba que usuario y clave sean correctos. Si sigue fallando, usa «Probar login por formulario»."
+                )
+            return f"Error del servidor del restaurante: {detail}"
+        return "Error del servidor del restaurante (página de error). Intenta de nuevo más tarde."
+    # Si ya es texto corto sin HTML, detectar el mismo error PHP
+    if "get_object_vars" in raw and "null given" in raw:
+        return (
+            "El servidor del restaurante falló al procesar el login (error interno). "
+            "Comprueba que usuario y clave sean correctos. Si sigue fallando, usa «Probar login por formulario»."
+        )
+    if len(raw) > 400:
+        raw = raw[:397] + "..."
+    return raw
+
+
+# --- Endpoints ---
+
+@app.get("/")
+def root():
+    return {"message": "Restaurant Scraper Login API", "docs": "/docs"}
+
+
+@app.get("/credentials")
+def read_credentials():
+    """Devuelve las credenciales guardadas (sin exponer la clave en logs)."""
+    cred = get_credentials()
+    # Opcional: ofuscar clave en respuesta
+    out = cred.copy()
+    if out.get("usuario_clave"):
+        out["usuario_clave"] = "********"
+    return out
+
+
+# WebSocket y cola para notificar progreso de login (credenciales)
+_credentials_ws_clients: list[WebSocket] = []
+_login_status_queue: queue.Queue = queue.Queue()
+
+
+def _login_status_push(step: str, message: str, **extra: Any) -> None:
+    """Envía un paso del login a la cola para que se emita por WebSocket (thread-safe)."""
+    try:
+        _login_status_queue.put_nowait({"step": step, "message": message, **extra})
+    except Exception:
+        pass
+
+
+@app.put("/credentials")
+def update_credentials(update: CredentialsUpdate):
+    """Actualiza las credenciales en credentials.json."""
+    current = _read_json(CREDENTIALS_FILE, {})
+    payload = update.model_dump(exclude_none=True)
+    if not payload:
+        raise HTTPException(status_code=400, detail="Envía al menos un campo para actualizar.")
+    current.update(payload)
+    save_credentials(current)
+    return {"message": "Credenciales actualizadas", "credentials": {k: "********" if k == "usuario_clave" else v for k, v in current.items()}}
+
+
+@app.websocket("/credentials/ws")
+async def credentials_status_websocket(websocket: WebSocket):
+    """
+    WebSocket para recibir en tiempo real el progreso al actualizar credenciales y hacer login.
+    Mensajes: step, message y opcionalmente success, credentials.
+    """
+    await websocket.accept()
+    _credentials_ws_clients.append(websocket)
+    try:
+        while True:
+            await asyncio.wait_for(websocket.receive_text(), timeout=300)
+    except (WebSocketDisconnect, asyncio.TimeoutError):
+        pass
+    finally:
+        if websocket in _credentials_ws_clients:
+            _credentials_ws_clients.remove(websocket)
+
+
+async def _broadcast_credentials_status(payload: dict) -> None:
+    """Envía un mensaje a todos los clientes del WebSocket de credenciales."""
+    dead: list[WebSocket] = []
+    for ws in list(_credentials_ws_clients):
+        try:
+            await ws.send_json(payload)
+        except Exception:
+            dead.append(ws)
+    for ws in dead:
+        if ws in _credentials_ws_clients:
+            _credentials_ws_clients.remove(ws)
+
+
+@app.post("/credentials/update-and-login")
+async def update_credentials_and_login(update: CredentialsUpdate):
+    """
+    Actualiza las credenciales, intenta login y notifica el progreso por WebSocket (/credentials/ws).
+    Si el login es correcto, devuelve las credenciales actuales (clave enmascarada) y la opción de actualizarlas.
+    """
+    payload = update.model_dump(exclude_none=True)
+    if not payload:
+        raise HTTPException(status_code=400, detail="Envía al menos un campo (usuario_nick, usuario_clave, etc.).")
+    current = _read_json(CREDENTIALS_FILE, {})
+    current.update(payload)
+    save_credentials(current)
+    cred_masked = {k: "********" if k == "usuario_clave" else v for k, v in current.items()}
+    await _broadcast_credentials_status({
+        "step": "credentials_saved",
+        "message": "Credenciales guardadas. Iniciando login...",
+    })
+    loop = asyncio.get_event_loop()
+    future = loop.run_in_executor(_get_executor(), _do_login_sync)
+    while not future.done():
+        try:
+            while True:
+                msg = _login_status_queue.get_nowait()
+                await _broadcast_credentials_status(msg)
+        except queue.Empty:
+            pass
+        await asyncio.sleep(0.05)
+    while True:
+        try:
+            msg = _login_status_queue.get_nowait()
+            await _broadcast_credentials_status(msg)
+        except queue.Empty:
+            break
+    result = future.result()
+    success = result.get("success", False) and not result.get("_is_error", False)
+    await _broadcast_credentials_status({
+        "step": "result",
+        "message": result.get("message", "Listo."),
+        "success": success,
+        "credentials": cred_masked,
+    })
+    if result.get("_is_error"):
+        code = result.get("status_code", 500)
+        return JSONResponse(status_code=code, content={
+            "message": result.get("message", "Error en login"),
+            "success": False,
+            "credentials": cred_masked,
+        })
+    return {
+        "message": result.get("message", "Login realizado"),
+        "success": True,
+        "credentials": cred_masked,
+    }
+
+
+def _value_for_select(cred_value: str) -> str:
+    """En el HTML los options tienen value 'string:1'; la API acepta '1'. Intentamos ambos."""
+    if not cred_value:
+        return cred_value
+    return f"string:{cred_value}"
+
+
+def _do_login_form_sync() -> dict:
+    """Login rellenando el formulario de la página (como un usuario). Usa el HTML del login."""
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        return {
+            "_is_error": True,
+            "status_code": 503,
+            "success": False,
+            "message": "Playwright no instalado.",
+            "saved_cookies": 0,
+        }
+
+    cred = get_credentials()
+    logger.info("Login (form): inicio - usuario=%s", cred.get("usuario_nick", "?"))
+
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            context = browser.new_context(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                ignore_https_errors=True,
+            )
+            saved_cookies = get_cookies()
+            if saved_cookies:
+                context.add_cookies(saved_cookies)
+
+            page = context.new_page()
+            page.goto(LOGIN_URL, wait_until="networkidle", timeout=30000)
+
+            # Esperar al formulario (Angular)
+            page.wait_for_selector('select[name="local_id"]', state="visible", timeout=15000)
+            logger.info("Login (form): formulario visible")
+
+            local_val = _value_for_select(cred.get("local_id", "1"))
+            caja_val = _value_for_select(cred.get("caja_id", "29"))
+            turno_val = _value_for_select(cred.get("turno_id", "1"))
+
+            # Orden: local (dispara carga de caja/turno), luego caja, turno, usuario, clave
+            page.select_option('select[name="local_id"]', value=local_val)
+            page.wait_for_timeout(1500)  # fnCambiarLocal() carga cajas/turnos
+
+            try:
+                page.select_option('select[name="caja_id"]', value=caja_val)
+            except Exception as e:
+                logger.warning("Login (form): caja_id %s no encontrado, intentando por índice: %s", caja_val, e)
+                page.select_option('select[name="caja_id"]', index=1)
+            try:
+                page.select_option('select[name="turno_id"]', value=turno_val)
+            except Exception as e:
+                logger.warning("Login (form): turno_id %s no encontrado: %s", turno_val, e)
+                page.select_option('select[name="turno_id"]', index=1)
+
+            page.fill('input[name="usuario_nick"]', cred.get("usuario_nick", ""))
+            page.fill('input[name="usuario_clave"]', cred.get("usuario_clave", ""))
+
+            # Esperar a que el botón esté habilitado (vm.cargaDataCaja && vm.cargaDataTurno)
+            submit = page.locator('button[type="submit"]')
+            try:
+                submit.wait_for(state="visible", timeout=5000)
+                page.wait_for_selector('button[type="submit"]:not([disabled])', timeout=10000)
+            except Exception as e:
+                logger.warning("Login (form): botón no se habilitó (caja/turno?): %s", e)
+            page.wait_for_timeout(500)
+
+            # Esperar respuesta del login al hacer clic (Angular llama al API)
+            login_resp_status = None
+            token_from_form = None
+            try:
+                with page.expect_response(lambda r: "usuario/login" in r.url) as resp_info:
+                    submit.click()
+                    logger.info("Login (form): clic en Iniciar sesión")
+                resp = resp_info.value
+                login_resp_status = resp.status
+                logger.info("Login (form): respuesta login API status=%s", login_resp_status)
+                if resp.status == 200:
+                    try:
+                        body_form = resp.json()
+                        if isinstance(body_form, dict) and body_form.get("data") and body_form.get("data").get("token"):
+                            token_from_form = body_form["data"]["token"]
+                            save_token(token_from_form)
+                            logger.info("Login (form): token guardado")
+                    except Exception:
+                        pass
+            except Exception as e:
+                logger.warning("Login (form): no se capturó respuesta del API: %s", e)
+
+            # Dar tiempo a redirección / actualización de la vista
+            page.wait_for_timeout(5000)
+            try:
+                page.wait_for_load_state("networkidle", timeout=8000)
+            except Exception:
+                pass
+
+            current_url = page.url
+            cookies = context.cookies()
+            save_cookies(cookies)
+
+            # Si sigue en login, intentar leer mensaje de error de la página (toast, .has-error, etc.)
+            error_hint = ""
+            if "#!/login" in current_url:
+                try:
+                    toast = page.locator(".toast-message, .toast-error, [class*='error']").first
+                    if toast.count() > 0 and toast.is_visible():
+                        error_hint = " " + (toast.text_content() or "")[:150]
+                except Exception:
+                    pass
+                if not error_hint:
+                    try:
+                        err_el = page.locator(".has-error .help-block, .alert-danger").first
+                        if err_el.count() > 0 and err_el.is_visible():
+                            error_hint = " " + (err_el.text_content() or "")[:150]
+                    except Exception:
+                        pass
+
+            browser.close()
+
+            # Éxito si ya no estamos en la ruta de login
+            if "#!/login" in current_url:
+                msg = "El formulario se envió pero la página sigue en login (revisa usuario/clave o captcha)."
+                if login_resp_status == 500:
+                    msg = "El servidor del restaurante respondió 500 al login (mismo error que por API)." + error_hint
+                elif error_hint:
+                    msg = msg.rstrip(".") + "." + error_hint
+                return {
+                    "_is_error": True,
+                    "status_code": 401,
+                    "success": False,
+                    "message": msg.strip(),
+                    "saved_cookies": len(cookies),
+                }
+
+            logger.info("Login (form): éxito, cookies guardadas (%s)", len(cookies))
+            return {
+                "_is_error": False,
+                "success": True,
+                "message": "Login realizado (formulario).",
+                "token": token_from_form or get_token(),
+                "saved_cookies": len(cookies),
+            }
+
+    except Exception as e:
+        logger.exception("Login (form): excepción %s", e)
+        return {
+            "_is_error": True,
+            "status_code": 500,
+            "success": False,
+            "message": f"{type(e).__name__}: {e}",
+            "saved_cookies": 0,
+            "detail": traceback.format_exc(),
+        }
+
+
+def _do_login_sync() -> dict:
+    """Ejecuta el login con Playwright síncrono (para usarse en un thread y evitar NotImplementedError en Windows)."""
+    _login_status_push("start", "Iniciando login...")
+    logger.info("Login: inicio")
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError as e:
+        logger.error("Playwright no instalado: %s", e)
+        _login_status_push("error", "Playwright no instalado.", success=False)
+        return {
+            "_is_error": True,
+            "status_code": 503,
+            "success": False,
+            "message": "Playwright no instalado. Ejecuta: pip install playwright && playwright install chromium",
+            "saved_cookies": 0,
+        }
+
+    cred = get_credentials()
+    _login_status_push("credentials_loaded", "Credenciales cargadas. Lanzando navegador...")
+    logger.info("Login: credenciales cargadas (usuario=%s)", cred.get("usuario_nick", "?"))
+    form_data = {
+        "usuario_nick": cred.get("usuario_nick", ""),
+        "usuario_clave": cred.get("usuario_clave", ""),
+        "usuario_recordar": cred.get("usuario_recordar", "1"),
+        "local_id": cred.get("local_id", "1"),
+        "turno_id": cred.get("turno_id", "1"),
+        "caja_id": cred.get("caja_id", "29"),
+        "app": cred.get("app", "Web"),
+    }
+
+    try:
+        with sync_playwright() as p:
+            _login_status_push("browser_start", "Lanzando Chromium...")
+            logger.info("Login: lanzando Chromium")
+            browser = p.chromium.launch(headless=True)
+            context = browser.new_context(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                ignore_https_errors=True,
+            )
+
+            saved_cookies = get_cookies()
+            if saved_cookies:
+                context.add_cookies(saved_cookies)
+
+            page = context.new_page()
+            _login_status_push("navigating", "Navegando a la página de login...")
+            logger.info("Login: navegando a %s", LOGIN_URL)
+            page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=30000)
+
+            _login_status_push("sending_login", "Enviando credenciales al servidor...")
+            logger.info("Login: POST a %s", LOGIN_API_URL)
+            response = page.request.post(
+                LOGIN_API_URL,
+                form=form_data,
+                headers={
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "Accept": "application/json",
+                },
+            )
+
+            status = response.status
+            logger.info("Login: respuesta HTTP %s", status)
+            body = None
+            try:
+                body = response.json()
+                logger.info("Login: body JSON keys=%s", list(body.keys())[:15] if isinstance(body, dict) else "n/a")
+            except Exception as e:
+                logger.warning("Login: no se pudo parsear JSON: %s", e)
+                try:
+                    raw = response.text()
+                    if raw and raw.strip():
+                        body = {"_raw": raw}
+                        logger.info("Login: body raw (primeros 200 chars): %s", raw[:200])
+                except Exception as e2:
+                    logger.warning("Login: no se pudo leer body: %s", e2)
+
+            cookies = context.cookies()
+            save_cookies(cookies)
+            _login_status_push("saving_session", "Guardando sesión y cookies...")
+            logger.info("Login: cookies guardadas (%s)", len(cookies))
+            browser.close()
+
+    except Exception as e:
+        logger.exception("Login: excepción en Playwright/request: %s", e)
+        _login_status_push("error", f"Error: {e}", success=False)
+        return {
+            "_is_error": True,
+            "status_code": 500,
+            "success": False,
+            "message": f"{type(e).__name__}: {e}",
+            "saved_cookies": 0,
+            "detail": traceback.format_exc(),
+        }
+
+    def _msg(b: dict | None, default: str = "Error desconocido") -> str:
+        if not b or not isinstance(b, dict):
+            return default
+        for key in ("mensajes", "message", "detail", "error"):
+            val = b.get(key)
+            if isinstance(val, list) and val:
+                return _clean_server_error_message(str(val[0]))
+            if isinstance(val, str) and val:
+                return _clean_server_error_message(val)
+        if b.get("_raw"):
+            return _clean_server_error_message(str(b["_raw"])[:2000])
+        return default
+
+    # Detectar respuesta HTML de error (Slim/PHP) aunque venga con 200
+    raw_body = (body or {}).get("_raw", "") if isinstance(body, dict) else ""
+    is_html_error = (
+        isinstance(raw_body, str)
+        and ("<html" in raw_body.lower() or "slim application error" in raw_body.lower())
+    )
+
+    if status != 200 or is_html_error:
+        msg = _msg(body, f"Login falló (HTTP {status})" if status != 200 else "Error del servidor del restaurante")
+        if is_html_error:
+            msg = _clean_server_error_message(raw_body)
+        _login_status_push("error", msg, success=False)
+        logger.warning("Login: falló HTTP %s - %s", status, msg[:200])
+        return {
+            "_is_error": True,
+            "status_code": status if status != 200 else 502,
+            "success": False,
+            "message": msg,
+            "saved_cookies": len(cookies),
+        }
+
+    mensaje = "Login realizado"
+    if body and isinstance(body, dict) and body.get("mensajes"):
+        mensaje = body["mensajes"][0] if body["mensajes"] else mensaje
+    else:
+        mensaje = _msg(body, mensaje)
+
+    # Extraer y guardar token (data.token) del JSON de login
+    token = None
+    if isinstance(body, dict) and body.get("data"):
+        token = body["data"].get("token")
+    if token:
+        save_token(token)
+        logger.info("Login: token guardado")
+
+    _login_status_push("done", mensaje, success=True)
+    logger.info("Login: éxito - %s", mensaje)
+    return {
+        "_is_error": False,
+        "success": True,
+        "message": mensaje,
+        "tipo": body.get("tipo") if isinstance(body, dict) else None,
+        "token": token,
+        "saved_cookies": len(cookies),
+        "data_preview": list(body.get("data", {}).keys())[:10] if isinstance(body, dict) and body.get("data") else None,
+    }
+
+
+_LOGIN_REFRESH_INTERVAL_SECONDS = 12 * 3600  # 12 horas: hacer login de nuevo para renovar sesión
+
+_login_executor: Any = None
+
+def _get_executor():
+    global _login_executor
+    if _login_executor is None:
+        import concurrent.futures
+        _login_executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+    return _login_executor
+
+
+async def _login_refresh_loop() -> None:
+    """Cada 12 horas ejecuta login de nuevo para renovar la sesión."""
+    import asyncio
+    while True:
+        await asyncio.sleep(_LOGIN_REFRESH_INTERVAL_SECONDS)
+        logger.info("Login refresh: ejecutando login (cada 12 h)")
+        try:
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(_get_executor(), _do_login_sync)
+            if result.get("_is_error"):
+                logger.warning("Login refresh: falló - %s", result.get("message", result.get("detail", "error desconocido")))
+            else:
+                logger.info("Login refresh: OK, token renovado")
+        except Exception as e:
+            logger.warning("Login refresh: excepción - %s", e)
+
+
+@app.post("/login")
+async def login_with_chromium(method: str = "api"):
+    """
+    Login con las credenciales guardadas. Guarda las cookies de sesión.
+
+    - **method=api** (por defecto): POST directo al API de login.
+    - **method=form**: Rellena el formulario de la página (como un usuario) y hace clic en Iniciar sesión.
+      Útil si el API devuelve error del servidor (Slim/PHP) y el flujo por formulario funciona.
+    """
+    import asyncio
+    logger.info("POST /login recibido (method=%s)", method)
+    worker = _do_login_form_sync if method == "form" else _do_login_sync
+    try:
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(_get_executor(), worker)
+    except Exception as e:
+        logger.exception("POST /login excepción: %s", e)
+        raise
+
+    if result.get("_is_error"):
+        code = result.get("status_code", 500)
+        content = {k: v for k, v in result.items() if k not in ("_is_error", "status_code", "detail")}
+        if result.get("detail"):
+            logger.error("Login error detail: %s", result["detail"])
+            content["detail_traceback"] = result["detail"]
+        logger.warning("POST /login respondiendo %s: %s", code, content.get("message", ""))
+        return JSONResponse(status_code=code, content=content)
+    logger.info("POST /login OK")
+    return {k: v for k, v in result.items() if k != "_is_error"}
+
+
+@app.get("/cookies")
+def read_cookies():
+    """Lista si hay cookies guardadas (no expone valores sensibles)."""
+    cookies = get_cookies()
+    return {
+        "count": len(cookies),
+        "names": [c.get("name") for c in cookies],
+    }
+
+
+@app.post("/cookies/clear")
+def clear_cookies():
+    """Borra las cookies guardadas (útil para forzar nuevo login)."""
+    save_cookies([])
+    return {"message": "Cookies borradas"}
+
+
+@app.get("/token")
+def read_token():
+    """Devuelve el token guardado (data.token del último login exitoso)."""
+    token = get_token()
+    if not token:
+        raise HTTPException(status_code=404, detail="No hay token. Haz login primero (POST /login).")
+    return {"token": token}
+
+
+# --- Informe de ventas (Excel) ---
+
+def _sanitize_path(name: str) -> str:
+    """Nombre seguro para carpeta/archivo: sin caracteres inválidos."""
+    if not name or not isinstance(name, str):
+        return "sin_nombre"
+    s = name.strip()
+    for c in '\\/:*?"<>|':
+        s = s.replace(c, "_")
+    return s or "sin_nombre"
+
+
+def _parse_fecha_to_date_str(fecha: Any) -> str | None:
+    """Convierte Fecha (ej. '10-02-2026' o ISO) a 'YYYY-MM-DD'."""
+    if not fecha:
+        return None
+    if hasattr(fecha, "strftime"):
+        return fecha.strftime("%Y-%m-%d")
+    s = str(fecha).strip()
+    if not s:
+        return None
+    # DD-MM-YYYY
+    for fmt in ("%d-%m-%Y", "%Y-%m-%d", "%d/%m/%Y"):
+        try:
+            return datetime.strptime(s[:10], fmt).strftime("%Y-%m-%d")
+        except ValueError:
+            continue
+    return None
+
+
+# Columnas a extraer del Excel (solo filas con fecha). Nombres posibles por columna.
+_REPORT_JSON_COLUMNS = [
+    ("Fecha", ["Fecha", "fecha"]),
+    ("Hora", ["Hora", "hora"]),
+    ("Cliente", ["Cliente", "cliente"]),
+    ("Local", ["Local", "local"]),
+    ("Monto pagado", ["Monto pagado", "Monto pagado", "monto pagado"]),
+    ("Canal de delivery", ["Canal de delivery", "canal de delivery"]),
+    ("Codigo integracion", ["Codigo integracion", "Codigo integración delivery", "Codigo integración", "codigo integracion"]),
+]
+
+
+def _excel_row_to_json_row(row_values: list, col_indices: dict) -> dict:
+    out = {}
+    for key, idx in col_indices.items():
+        if idx is None:
+            out[key] = None
+            continue
+        val = row_values[idx] if idx < len(row_values) else None
+        if key == "Monto pagado" and isinstance(val, (int, float)):
+            out[key] = float(val)
+        elif val is not None and hasattr(val, "isoformat"):
+            try:
+                out[key] = val.isoformat()
+            except Exception:
+                out[key] = str(val)
+        else:
+            out[key] = str(val).strip() if val is not None and str(val).strip() else None
+    return out
+
+
+def _extract_ventas_json_from_excel(filepath: Path) -> list[dict]:
+    """Lee el Excel y devuelve lista de dicts con las columnas indicadas, solo filas con fecha."""
+    import openpyxl
+    wb = openpyxl.load_workbook(filepath, read_only=True, data_only=True)
+    ws = wb.active
+    col_indices = {key: None for key, _ in _REPORT_JSON_COLUMNS}
+    header_found = False
+    out = []
+
+    for row in ws.iter_rows(values_only=True):
+        row_list = list(row) if row else []
+        row_str = [str(c).strip() if c is not None else "" for c in row_list]
+
+        if not header_found and ("Fecha" in row_str or "fecha" in row_str):
+            for key, aliases in _REPORT_JSON_COLUMNS:
+                for alias in aliases:
+                    if alias in row_str:
+                        col_indices[key] = row_str.index(alias)
+                        break
+            header_found = True
+            continue
+
+        if not header_found:
+            continue
+
+        idx_fecha = col_indices.get("Fecha")
+        if idx_fecha is None or idx_fecha >= len(row_list):
+            continue
+        fecha_val = row_list[idx_fecha]
+        if fecha_val is None or (isinstance(fecha_val, str) and not str(fecha_val).strip()):
+            continue
+        item = _excel_row_to_json_row(row_list, col_indices)
+        item["Fecha"] = fecha_val.isoformat() if hasattr(fecha_val, "isoformat") else str(fecha_val).strip()
+        out.append(item)
+
+    wb.close()
+    return out
+
+
+def _save_filas_by_local_day_canal(filas: list[dict]) -> None:
+    """
+    Guarda las filas en estructura: reports/{Local}/{YYYY-MM-DD}/{Canal delivery}.json
+    y actualiza locales.json y canales_delivery.json (listas sin repetir).
+    """
+    from collections import defaultdict
+    groups = defaultdict(list)
+    locales_set = set()
+    canales_set = set()
+
+    for row in filas:
+        local = (row.get("Local") or "").strip() or "Sin local"
+        fecha = row.get("Fecha")
+        date_str = _parse_fecha_to_date_str(fecha)
+        if not date_str:
+            continue
+        canal = (row.get("Canal de delivery") or "").strip() or "Sin canal"
+        key = (local, date_str, canal)
+        groups[key].append(row)
+        locales_set.add(local)
+        canales_set.add(canal)
+
+    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+
+    for (local, date_str, canal), rows in groups.items():
+        dir_local = REPORTS_DIR / _sanitize_path(local) / date_str
+        dir_local.mkdir(parents=True, exist_ok=True)
+        filepath = dir_local / f"{_sanitize_path(canal)}.json"
+        _write_json(filepath, rows)
+        logger.info("Report: guardado %s (%s filas)", filepath, len(rows))
+
+    # Actualizar índices: canales sin repetir; locales se fusionan (mantener id+name desde API)
+    existing_locales = _locales_list_for_iteration()
+    existing_names = {_locale_name(x) for x in existing_locales if _locale_name(x)}
+    existing_dicts = []
+    for x in existing_locales:
+        if isinstance(x, dict) and x.get("name"):
+            existing_dicts.append(x)
+        elif isinstance(x, str) and x.strip():
+            existing_dicts.append({"id": "", "name": x.strip()})
+    for name in locales_set:
+        if name and name not in existing_names:
+            existing_dicts.append({"id": "", "name": name})
+            existing_names.add(name)
+    existing_dicts.sort(key=lambda x: (x.get("name") or "").lower())
+    existing_canales = list(_read_json(REPORTS_CANALES_DELIVERY_JSON, []))
+    all_canales = sorted(set(existing_canales) | canales_set)
+    REPORTS_LOCALES_JSON.parent.mkdir(parents=True, exist_ok=True)
+    _write_json(REPORTS_LOCALES_JSON, existing_dicts)
+    _write_json(REPORTS_CANALES_DELIVERY_JSON, all_canales)
+    logger.info("Report: índices actualizados (%s locales, %s canales)", len(existing_dicts), len(all_canales))
+
+
+_REPORT_DEFAULT_PARAMS = {
+    "page": "informeventasv3_informeventas",
+    "type": "excel",
+    "or": "L",
+    "caja": "-1",
+    "doc": "-1",
+    "estado": "1",
+    "turno": "-1",
+    "ordenarDoc": "0",
+    "local": "-1",
+    "serie": "-1",
+    "numero": "-1",
+    "tipoventa": "-1",
+    "filtroreservas": "-1",
+    "tipoemision": "-1",
+    "moneda_id": "1",
+    "marca_id": "0",
+    "pagina": "1",
+    "complementoventa": "0",
+    "registros": "20000",
+    "soloAlCredito": "0",
+    "ruc": "-1",
+    "idmonedatc": "-1",
+}
+
+# Zona horaria Colombia para "hoy" (en Windows puede requerir pip install tzdata)
+_COLOMBIA_TZ = None
+if ZoneInfo:
+    try:
+        _COLOMBIA_TZ = ZoneInfo("America/Bogota")
+    except Exception:
+        pass
+
+
+def _now() -> datetime:
+    """Ahora en Colombia o UTC."""
+    if _COLOMBIA_TZ:
+        return datetime.now(_COLOMBIA_TZ)
+    return datetime.utcnow()
+
+
+def _get_today_colombia() -> str:
+    """Fecha de hoy en Colombia (solo año-mes-día, sin hora)."""
+    return _now().strftime("%Y-%m-%d")
+
+
+def _parse_hhmm(s: str) -> tuple[int, int]:
+    """Convierte 'HH:MM' o 'H:MM' en (hour, minute)."""
+    s = (s or "").strip()
+    if ":" in s:
+        parts = s.split(":", 1)
+        try:
+            return int(parts[0].strip()) % 24, int(parts[1].strip()) % 60
+        except ValueError:
+            pass
+    return 0, 0
+
+
+def _is_within_opening_hours() -> bool:
+    """
+    True si la hora actual en Colombia está dentro del horario de apertura (horarios.json).
+    Por defecto: 12:30 a 00:00 (medianoche). Fuera de ese horario el restaurante está cerrado.
+    """
+    data = _read_json(HORARIOS_JSON, {})
+    if not isinstance(data, dict):
+        return True
+    open_at = (data.get("open_at") or "12:30").strip()
+    close_at = (data.get("close_at") or "00:00").strip()
+    now = _now()
+    h, m = now.hour, now.minute
+    open_h, open_m = _parse_hhmm(open_at)
+    close_h, close_m = _parse_hhmm(close_at)
+    now_minutes = h * 60 + m
+    open_minutes = open_h * 60 + open_m
+    close_minutes = close_h * 60 + close_m
+    if close_minutes <= open_minutes:
+        # Cierra a medianoche (ej. open 12:30, close 00:00): abierto si now >= open o now < close
+        return now_minutes >= open_minutes or now_minutes < close_minutes
+    return open_minutes <= now_minutes < close_minutes
+
+
+async def _run_report_for_date(fecha: str) -> dict:
+    """
+    Descarga el reporte para una fecha (YYYY-MM-DD), guarda Excel y JSON por local/día/canal.
+    Retorna {"success": bool, "error": str|None, "filas": int}.
+    """
+    import httpx
+    token = get_token()
+    if not token:
+        return {"success": False, "error": "No hay token. Haz login (POST /login).", "filas": 0}
+    f1 = f"{fecha} 00:00:00"
+    f2 = f"{fecha} 23:59:59"
+    name_suffix = datetime.utcnow().strftime("%d.%m.%Y_%H.%M.%S")
+    report_name = f"InformeVentas_{name_suffix}"
+    params = {**_REPORT_DEFAULT_PARAMS, "name": report_name, "f1": f1, "f2": f2, "token": token}
+    url = f"{REPORT_URL}?{urlencode(params)}"
+    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    cookies_dict = {c["name"]: c["value"] for c in get_cookies() if isinstance(c.get("name"), str) and isinstance(c.get("value"), str)}
+    try:
+        async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
+            resp = await client.get(url, cookies=cookies_dict)
+    except Exception as e:
+        return {"success": False, "error": str(e), "filas": 0}
+    if resp.status_code != 200:
+        return {"success": False, "error": f"HTTP {resp.status_code}", "filas": 0}
+    ct = (resp.headers.get("content-type") or "").lower()
+    is_html = "html" in ct or (len(resp.content) < 2000 and resp.content.strip()[:20].lower().startswith(b"<!doctype"))
+    if is_html:
+        return {"success": False, "error": "Servidor devolvió HTML (token/sesión inválidos).", "filas": 0}
+    filename = f"InformeVentas_{fecha}_{fecha}.xlsx"
+    filepath = REPORTS_DIR / filename
+    filepath.write_bytes(resp.content)
+    filas = []
+    try:
+        filas = _extract_ventas_json_from_excel(filepath)
+        _save_filas_by_local_day_canal(filas)
+        json_flat = REPORTS_DIR / filename.replace(".xlsx", ".json")
+        _write_json(json_flat, filas)
+    except Exception as e:
+        logger.warning("Report automático: no se pudo generar JSON: %s", e)
+    return {"success": True, "error": None, "filas": len(filas)}
+
+
+# Estado compartido para el programador de reportes y el WebSocket
+_report_scheduler_state: dict[str, Any] = {
+    "next_run_at": None,  # datetime
+    "status": "waiting",  # waiting | calling_report | report_ready
+    "last_report_at": None,  # datetime
+    "last_error": None,
+    "last_filas": 0,
+    "interval_seconds": 300,  # 5 min
+}
+_report_ws_clients: list[WebSocket] = []
+
+
+async def _report_scheduler_loop() -> None:
+    """Cada 5 minutos descarga el reporte del día (fecha hoy Colombia)."""
+    state = _report_scheduler_state
+    while True:
+        now = _now()
+        if state["next_run_at"] is None:
+            state["next_run_at"] = now
+        target = state["next_run_at"]
+        if now < target:
+            await asyncio.sleep(1)
+            continue
+        fecha = _get_today_colombia()
+        state["status"] = "calling_report"
+        state["last_error"] = None
+        logger.info("Report automático: descargando reporte del día %s", fecha)
+        result = await _run_report_for_date(fecha)
+        state["last_report_at"] = _now()
+        state["last_filas"] = result.get("filas", 0)
+        if result.get("success"):
+            state["status"] = "report_ready"
+            state["last_error"] = None
+            logger.info("Report automático: listo (%s filas)", state["last_filas"])
+        else:
+            state["status"] = "report_ready"
+            state["last_error"] = result.get("error") or "Error desconocido"
+            logger.warning("Report automático: falló - %s", state["last_error"])
+        state["next_run_at"] = state["last_report_at"].replace(microsecond=0) + timedelta(seconds=state["interval_seconds"])
+        await asyncio.sleep(1)
+
+
+# --- Locales desde API (actualización cada 10 min) ---
+
+_LOCALES_REFRESH_INTERVAL = 600  # 10 minutos
+
+
+async def _fetch_and_save_locales() -> bool:
+    """
+    POST a getLocalesPermitidos/0 con Token token="...", parsea data[] y guarda
+    en reports/locales.json como [{"id": local_id, "name": local_descripcion}, ...].
+    """
+    import httpx
+    token = get_token()
+    if not token:
+        logger.debug("Locales API: no hay token, se omite actualización")
+        return False
+    auth_header = f'Token token="{token}"'
+    REPORTS_LOCALES_JSON.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                LOCALES_API_URL,
+                headers={"Authorization": auth_header},
+                json={},
+            )
+    except Exception as e:
+        logger.warning("Locales API: error de conexión - %s", e)
+        return False
+    if resp.status_code != 200:
+        logger.warning("Locales API: HTTP %s", resp.status_code)
+        return False
+    try:
+        body = resp.json()
+    except Exception:
+        logger.warning("Locales API: respuesta no es JSON")
+        return False
+    if body.get("tipo") == "401":
+        logger.debug("Locales API: no autorizado (token inválido o expirado)")
+        return False
+    data = body.get("data")
+    if not isinstance(data, list):
+        logger.warning("Locales API: data no es lista")
+        return False
+    items = []
+    for row in data:
+        if not isinstance(row, dict):
+            continue
+        local_id = (row.get("local_id") or "").strip()
+        local_descripcion = (row.get("local_descripcion") or "").strip()
+        if not local_descripcion:
+            continue
+        items.append({"id": local_id, "name": local_descripcion})
+    items.sort(key=lambda x: (x["name"].lower(), x["id"]))
+    _write_json(REPORTS_LOCALES_JSON, items)
+    logger.info("Locales API: actualizados %s locales", len(items))
+    return True
+
+
+async def _locales_scheduler_loop() -> None:
+    """Cada 10 minutos obtiene la lista de locales desde la API y actualiza locales.json."""
+    while True:
+        await _fetch_and_save_locales()
+        await asyncio.sleep(_LOCALES_REFRESH_INTERVAL)
+
+
+_DELIVERYS_INTERVAL_SECONDS = 120  # 2 minutos
+_DELIVERYS_DELAY_BETWEEN_LOCALS = 5  # segundos entre cada sede para no saturar la API
+_DELIVERYS_MAX_PER_LOCAL = 100  # solo los primeros 100 resultados por sede
+
+# Estado compartido para el scheduler de deliverys y el WebSocket /report/ws
+_deliverys_scheduler_state: dict[str, Any] = {
+    "next_run_at": None,
+    "status": "waiting",  # waiting | calling_deliverys | deliverys_ready
+    "last_report_at": None,  # datetime (nombre legacy para compat WS)
+    "last_error": None,
+    "last_filas": 0,  # total deliverys obtenidos en la última pasada
+    "interval_seconds": _DELIVERYS_INTERVAL_SECONDS,
+}
+
+
+async def _deliverys_scheduler_loop() -> None:
+    """Cada 2 minutos consulta obtenerDeliverysPorLocalSimple para cada local_id (fecha hoy); espera 5 s entre sedes."""
+    import httpx
+    state = _deliverys_scheduler_state
+    while True:
+        await asyncio.sleep(1)
+        now = _now()
+        if state["next_run_at"] is None:
+            state["next_run_at"] = now
+        if now < state["next_run_at"]:
+            continue
+        locales_data = _locales_list_for_iteration()
+        local_ids = []
+        for item in locales_data:
+            lid = _locale_id(item) if isinstance(item, dict) else ""
+            if lid:
+                local_ids.append(lid)
+        if not local_ids:
+            state["next_run_at"] = now.replace(microsecond=0) + timedelta(seconds=_DELIVERYS_INTERVAL_SECONDS)
+            await asyncio.sleep(1)
+            continue
+        if not _is_within_opening_hours():
+            logger.debug("Deliverys scheduler: fuera de horario de apertura (restaurante cerrado), se omite")
+            state["next_run_at"] = now.replace(microsecond=0) + timedelta(seconds=_DELIVERYS_INTERVAL_SECONDS)
+            await asyncio.sleep(1)
+            continue
+        token = get_token()
+        cookies_dict = {c["name"]: c["value"] for c in get_cookies() if isinstance(c.get("name"), str) and isinstance(c.get("value"), str)}
+        if not token:
+            logger.debug("Deliverys scheduler: sin token, se omite (haz login)")
+            state["next_run_at"] = now.replace(microsecond=0) + timedelta(seconds=_DELIVERYS_INTERVAL_SECONDS)
+            await asyncio.sleep(1)
+            continue
+        state["status"] = "calling_deliverys"
+        state["last_error"] = None
+        logger.info("Deliverys scheduler: consultando %s locales (fecha hoy)", len(local_ids))
+        total_filas = 0
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                fecha_hoy = _get_today_colombia()
+                for i, local_id in enumerate(local_ids):
+                    data = await _fetch_deliverys_for_local(client, local_id, cookies_dict, token)
+                    _save_deliverys_for_local(local_id, data)
+                    total_filas += len(data)
+                    # Notificar por WebSocket que esta sede está lista para refrescar órdenes en tiempo real
+                    payload = {"type": "sede_ready", "local_id": local_id, "fecha": fecha_hoy}
+                    for ws in list(_report_ws_clients):
+                        try:
+                            await ws.send_json(payload)
+                        except Exception:
+                            pass
+                    if i < len(local_ids) - 1:
+                        await asyncio.sleep(_DELIVERYS_DELAY_BETWEEN_LOCALS)
+            _update_canales_from_deliverys_cache()
+            state["status"] = "deliverys_ready"
+            state["last_error"] = None
+            state["last_filas"] = total_filas
+            logger.info("Deliverys scheduler: listo (%s deliverys en total)", total_filas)
+        except Exception as e:
+            state["status"] = "deliverys_ready"
+            state["last_error"] = str(e)
+            logger.warning("Deliverys scheduler: error - %s", e)
+        state["last_report_at"] = _now()
+        state["next_run_at"] = state["last_report_at"].replace(microsecond=0) + timedelta(seconds=_DELIVERYS_INTERVAL_SECONDS)
+        await asyncio.sleep(1)
+
+
+def _locales_list_for_iteration() -> list[dict[str, str] | str]:
+    """Devuelve la lista de locales tal como está en disco (dict con id/name o strings legacy)."""
+    data = _read_json(REPORTS_LOCALES_JSON, [])
+    if not isinstance(data, list):
+        return []
+    return data
+
+
+def _locale_name(item: dict[str, str] | str) -> str:
+    """Extrae el nombre del local de un ítem (dict con 'name' o string legacy)."""
+    if isinstance(item, dict):
+        return (item.get("name") or "").strip()
+    return (item or "").strip()
+
+
+@app.get("/report")
+async def report_ventas(
+    fecha_inicio: str = Query(..., description="Fecha inicio YYYY-MM-DD"),
+    fecha_fin: str = Query(..., description="Fecha fin YYYY-MM-DD"),
+):
+    """
+    Descarga el informe de ventas en Excel para el rango de fechas.
+    Usa el token y las cookies guardadas. Guarda el archivo en la carpeta reports/ y lo devuelve.
+    """
+    import httpx
+
+    token = get_token()
+    if not token:
+        raise HTTPException(status_code=401, detail="No hay token. Haz login primero (POST /login).")
+
+    # Validar y formatear fechas
+    try:
+        d1 = datetime.strptime(fecha_inicio.strip(), "%Y-%m-%d")
+        d2 = datetime.strptime(fecha_fin.strip(), "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Fechas deben ser YYYY-MM-DD (ej: 2026-02-01)")
+
+    f1 = d1.strftime("%Y-%m-%d 00:00:00")
+    f2 = d2.strftime("%Y-%m-%d 23:59:59")
+    name_suffix = datetime.utcnow().strftime("%d.%m.%Y_%H.%M.%S")
+    report_name = f"InformeVentas_{name_suffix}"
+
+    params = {**_REPORT_DEFAULT_PARAMS, "name": report_name, "f1": f1, "f2": f2, "token": token}
+    url = f"{REPORT_URL}?{urlencode(params)}"
+
+    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+
+    cookies_list = get_cookies()
+    cookies_dict = {c["name"]: c["value"] for c in cookies_list if isinstance(c.get("name"), str) and isinstance(c.get("value"), str)}
+
+    try:
+        async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
+            resp = await client.get(url, cookies=cookies_dict)
+    except Exception as e:
+        logger.exception("Report: error de conexión %s", e)
+        raise HTTPException(status_code=502, detail=f"Error al conectar con el servidor del reporte: {e}")
+
+    if resp.status_code != 200:
+        logger.warning("Report: respuesta %s", resp.status_code)
+        raise HTTPException(
+            status_code=502,
+            detail=f"El servidor del reporte respondió {resp.status_code}. ¿Token o sesión expirados? Haz login de nuevo.",
+        )
+
+    content_type = (resp.headers.get("content-type") or "").lower()
+    is_html = "html" in content_type or (len(resp.content) < 2000 and resp.content.strip()[:20].lower().startswith(b"<!doctype")) or resp.content.strip()[:10].lower().startswith(b"<html")
+    if is_html:
+        logger.warning("Report: respuesta HTML (posible error o login requerido)")
+        raise HTTPException(
+            status_code=502,
+            detail="El servidor devolvió HTML en lugar de Excel (token/sesión inválidos o error del servidor).",
+        )
+
+    filename = f"InformeVentas_{fecha_inicio}_{fecha_fin}.xlsx"
+    filepath = REPORTS_DIR / filename
+    filepath.write_bytes(resp.content)
+    logger.info("Report: guardado %s (%s bytes)", filepath, len(resp.content))
+
+    # Extraer y guardar por carpeta: Local -> día -> archivo por canal delivery + índices
+    try:
+        filas = _extract_ventas_json_from_excel(filepath)
+        _save_filas_by_local_day_canal(filas)
+        # También guardar el JSON plano por compatibilidad (mismo nombre que el Excel)
+        json_flat = REPORTS_DIR / filename.replace(".xlsx", ".json")
+        _write_json(json_flat, filas)
+        logger.info("Report: guardado %s (%s filas)", json_flat, len(filas))
+    except Exception as e:
+        logger.warning("Report: no se pudo generar JSON del Excel: %s", e)
+
+    return FileResponse(
+        path=str(filepath),
+        filename=filename,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+
+@app.get("/report/locales")
+def get_report_locales():
+    """Devuelve la lista de locales (sin repetir) registrados en los reportes."""
+    data = _read_json(REPORTS_LOCALES_JSON, [])
+    if not isinstance(data, list):
+        return {"locales": []}
+    return {"locales": data}
+
+
+@app.get("/report/canales-delivery")
+def get_report_canales_delivery():
+    """Devuelve la lista de canales de delivery (sin repetir) registrados en los reportes."""
+    data = _read_json(REPORTS_CANALES_DELIVERY_JSON, [])
+    if not isinstance(data, list):
+        return {"canales_delivery": []}
+    return {"canales_delivery": data}
+
+
+# --- Órdenes y fotos (frontend) ---
+
+def _sanitize_codigo(codigo: str) -> str:
+    """Código seguro para rutas de archivo."""
+    s = (codigo or "").strip()
+    return "".join(c if c.isalnum() or c in "._-" else "_" for c in s) or "sin_codigo"
+
+
+# --- Deliverys API (órdenes por local, cada 5 min; reemplaza Excel para listado) ---
+
+def _delivery_row_to_order(row: dict) -> dict:
+    """Convierte un ítem de la API obtenerDeliverysPorLocalSimple al formato orden (frontend)."""
+    nombres = (row.get("delivery_nombres") or "").strip()
+    apellidos = (row.get("delivery_apellidos") or "").strip()
+    if apellidos and apellidos != ".":
+        cliente = f"{nombres} {apellidos}".strip()
+    else:
+        cliente = nombres or "—"
+    canal_obj = row.get("canaldelivery") or {}
+    canal = (canal_obj.get("canaldelivery_descripcion") or row.get("canaldelivery_descripcion") or "").strip() or "—"
+    fecha_hora = (row.get("delivery_fecha") or "").strip()
+    fecha = fecha_hora[:10] if len(fecha_hora) >= 10 else ""
+    hora = fecha_hora[11:19] if len(fecha_hora) >= 19 else (fecha_hora[11:] if len(fecha_hora) > 10 else "")
+    importe = (row.get("delivery_importe") or "").strip()
+    try:
+        monto_val = float(importe) if importe else None
+    except (ValueError, TypeError):
+        monto_val = None
+    return {
+        "Codigo integracion": (row.get("delivery_codigolimadelivery") or row.get("delivery_codigointegracion") or "").strip() or "—",
+        "Cliente": cliente,
+        "Canal de delivery": canal,
+        "Monto pagado": importe if importe else None,
+        "Fecha": fecha,
+        "Hora": hora,
+        "delivery_id": (row.get("delivery_id") or "").strip(),
+        "delivery_identificadorunico": (row.get("delivery_identificadorunico") or "").strip(),
+        "delivery_celular": (row.get("delivery_celular") or "").strip(),
+    }
+
+
+def _delivery_auth_header(token: str | None) -> dict[str, str]:
+    """Header de autorización para la API de deliverys/reportes: Token token=\"...\"."""
+    if not token:
+        return {}
+    return {"Authorization": f'Token token="{token}"'}
+
+
+async def _fetch_deliverys_for_local(
+    client: "httpx.AsyncClient",
+    local_id: str,
+    cookies_dict: dict[str, str],
+    token: str | None,
+) -> list[dict]:
+    """Obtiene como máximo los primeros 100 deliverys del local (paginación 50 en 50)."""
+    import httpx
+    headers = _delivery_auth_header(token)
+    page = 1
+    page_size = 50
+    offset = 0
+    all_data: list[dict] = []
+    while len(all_data) < _DELIVERYS_MAX_PER_LOCAL:
+        url = f"{DELIVERY_API_BASE}/obtenerDeliverysPorLocalSimple/{local_id}/{page}/{page_size}/{offset}"
+        try:
+            resp = await client.get(url, cookies=cookies_dict, headers=headers)
+        except Exception:
+            break
+        if resp.status_code != 200:
+            break
+        try:
+            body = resp.json()
+        except Exception:
+            break
+        if body.get("tipo") == "401":
+            break
+        data = body.get("data") if isinstance(body.get("data"), list) else []
+        if not data:
+            break
+        all_data.extend(data)
+        if len(all_data) >= _DELIVERYS_MAX_PER_LOCAL:
+            all_data = all_data[:_DELIVERYS_MAX_PER_LOCAL]
+            break
+        if len(data) < page_size:
+            break
+        offset += page_size
+        page += 1
+    return all_data
+
+
+def _migrate_old_deliverys_to_per_date() -> None:
+    """Una vez: convierte deliverys/{local_id}.json antiguos a deliverys/{local_id}/{date}.json."""
+    if not DELIVERYS_CACHE_DIR.exists():
+        return
+    for path in DELIVERYS_CACHE_DIR.iterdir():
+        if not path.is_file() or path.suffix != ".json":
+            continue
+        local_id = path.stem
+        cached = _read_json(path, {})
+        data = cached.get("data") if isinstance(cached.get("data"), list) else []
+        if not data:
+            path.unlink()
+            continue
+        from collections import defaultdict
+        by_date: dict[str, list[dict]] = defaultdict(list)
+        for row in data:
+            fecha = (row.get("delivery_fecha") or "").strip()[:10]
+            if fecha:
+                by_date[fecha].append(row)
+        local_dir = DELIVERYS_CACHE_DIR / local_id
+        local_dir.mkdir(parents=True, exist_ok=True)
+        for date_str, rows in by_date.items():
+            filepath = local_dir / f"{date_str}.json"
+            out = {"fetched_at": cached.get("fetched_at") or _now().isoformat(), "data": rows}
+            _write_json(filepath, out)
+        path.unlink()
+        logger.info("Deliverys: migrado %s -> %s fechas", path.name, len(by_date))
+
+
+def _save_deliverys_for_local(local_id: str, data: list[dict]) -> None:
+    """
+    Guarda deliverys por fecha: reports/deliverys/{local_id}/{YYYY-MM-DD}.json.
+    Solo agrega o actualiza órdenes con las que vienen del reporte; nunca borra
+    las que ya estaban (no se reemplaza el JSON completo por el que llegó).
+    """
+    from collections import defaultdict
+    DELIVERYS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    local_dir = DELIVERYS_CACHE_DIR / local_id
+    local_dir.mkdir(parents=True, exist_ok=True)
+    by_date: dict[str, list[dict]] = defaultdict(list)
+    for row in data:
+        fecha = (row.get("delivery_fecha") or "").strip()[:10]
+        if fecha:
+            by_date[fecha].append(row)
+    fetched_at = _now().isoformat()
+    for date_str, new_rows in by_date.items():
+        filepath = local_dir / f"{date_str}.json"
+        # Cargar siempre lo que ya existía (no reemplazar por el JSON que llegó)
+        existing_by_id: dict[str, dict] = {}
+        if filepath.exists():
+            cached = _read_json(filepath, {})
+            existing_list = (cached.get("data") or []) if isinstance(cached.get("data"), list) else []
+            for i, r in enumerate(existing_list):
+                did = (r.get("delivery_id") or "").strip()
+                key = did if did else f"__existing_{i}"
+                existing_by_id[key] = r
+        # Solo agregar o actualizar con las nuevas; nunca borrar existentes
+        for r in new_rows:
+            did = (r.get("delivery_id") or "").strip()
+            if did:
+                existing_by_id[did] = r
+            else:
+                existing_by_id[f"__new_{len(existing_by_id)}"] = r
+        out = {"fetched_at": fetched_at, "data": list(existing_by_id.values())}
+        _write_json(filepath, out)
+        logger.debug("Deliverys: fusionados %s ítems para local_id=%s fecha=%s", len(out["data"]), local_id, date_str)
+
+
+def _update_canales_from_deliverys_cache() -> None:
+    """Actualiza canales_delivery.json con los canales presentes en la cache de deliverys (por local/fecha)."""
+    canales_set = set()
+    if DELIVERYS_CACHE_DIR.exists():
+        for json_file in DELIVERYS_CACHE_DIR.rglob("*.json"):
+            if not json_file.is_file():
+                continue
+            cached = _read_json(json_file, {})
+            data = cached.get("data") if isinstance(cached.get("data"), list) else []
+            for row in data:
+                canal_obj = row.get("canaldelivery") or {}
+                desc = (canal_obj.get("canaldelivery_descripcion") or row.get("canaldelivery_descripcion") or "").strip()
+                if desc:
+                    canales_set.add(desc)
+    if canales_set:
+        existing = list(_read_json(REPORTS_CANALES_DELIVERY_JSON, []))
+        all_canales = sorted(set(existing) | canales_set)
+        REPORTS_CANALES_DELIVERY_JSON.parent.mkdir(parents=True, exist_ok=True)
+        _write_json(REPORTS_CANALES_DELIVERY_JSON, all_canales)
+
+
+def _locale_id(item: dict[str, str] | str) -> str:
+    """Extrae el id del local de un ítem (dict con 'id' o vacío)."""
+    if isinstance(item, dict):
+        return (item.get("id") or "").strip()
+    return ""
+
+
+def _get_local_id_by_name(local_name: str) -> str | None:
+    """Devuelve el local_id para un nombre de local (desde locales.json)."""
+    for item in _locales_list_for_iteration():
+        if _locale_name(item) == (local_name or "").strip():
+            lid = _locale_id(item) if isinstance(item, dict) else ""
+            return lid if lid else None
+    return None
+
+
+def _get_orders_for_local_date(local: str, fecha: str) -> list[dict]:
+    """Órdenes para un local y fecha desde reports/deliverys/{local_id}/{YYYY-MM-DD}.json."""
+    local_id = _get_local_id_by_name(local)
+    if not local_id:
+        return []
+    date_str = fecha.strip()[:10]
+    filepath = DELIVERYS_CACHE_DIR / local_id / f"{date_str}.json"
+    if not filepath.exists():
+        return []
+    cached = _read_json(filepath, {})
+    data = cached.get("data") if isinstance(cached.get("data"), list) else []
+    return [_delivery_row_to_order(row) for row in data]
+
+
+def _find_order_by_codigo(codigo: str) -> dict | None:
+    """Busca una orden por código de integración o identificador único en deliverys/{local_id}/{fecha}.json."""
+    cod = (codigo or "").strip().lstrip("#")
+    if not cod:
+        return None
+    if not DELIVERYS_CACHE_DIR.exists():
+        return None
+    for local_dir in DELIVERYS_CACHE_DIR.iterdir():
+        if not local_dir.is_dir():
+            continue
+        for json_file in local_dir.glob("*.json"):
+            cached = _read_json(json_file, {})
+            data = cached.get("data") if isinstance(cached.get("data"), list) else []
+            for row in data:
+                cod_lima = (row.get("delivery_codigolimadelivery") or row.get("delivery_codigointegracion") or "").strip()
+                identificador = (row.get("delivery_identificadorunico") or "").strip()
+                if cod_lima == cod or identificador == cod:
+                    return _delivery_row_to_order(row)
+    return None
+
+
+def _get_fotos_for_codigo(codigo: str) -> dict:
+    """Devuelve { entrega: [urls], apelacion: { canal: [urls] }, respuestas: [urls] }."""
+    base = UPLOADS_DIR / _sanitize_codigo(codigo)
+    out = {"entrega": [], "apelacion": {}, "respuestas": []}
+    if not base.exists():
+        return out
+    for name in ("entrega", "respuestas"):
+        folder = base / name
+        if folder.is_dir():
+            out[name] = [f"/api/orders/{codigo}/fotos/{name}/{f.name}" for f in folder.iterdir() if f.is_file()]
+    apelacion_dir = base / "apelacion"
+    if apelacion_dir.is_dir():
+        for canal_dir in apelacion_dir.iterdir():
+            if canal_dir.is_dir():
+                out["apelacion"][canal_dir.name] = [f"/api/orders/{codigo}/fotos/apelacion/{canal_dir.name}/{f.name}" for f in canal_dir.iterdir() if f.is_file()]
+    return out
+
+
+def _get_no_entregadas_set() -> set[str]:
+    """Lee la lista de delivery_id marcados como no entregada."""
+    data = _read_json(NO_ENTREGADAS_JSON, [])
+    if not isinstance(data, list):
+        return set()
+    return {str(x).strip() for x in data if x}
+
+
+def _mark_no_entregada(delivery_id: str) -> None:
+    """Marca una orden como no entregada (por delivery_id)."""
+    did = (delivery_id or "").strip()
+    if not did:
+        return
+    ids_set = _get_no_entregadas_set()
+    ids_set.add(did)
+    NO_ENTREGADAS_JSON.parent.mkdir(parents=True, exist_ok=True)
+    _write_json(NO_ENTREGADAS_JSON, sorted(ids_set))
+    logger.info("No entregada: marcado delivery_id=%s", did)
+
+
+def _unmark_no_entregada(delivery_id: str) -> None:
+    """Quita la marca de no entregada cuando se sube foto de entrega."""
+    did = (delivery_id or "").strip()
+    if not did:
+        return
+    ids_set = _get_no_entregadas_set()
+    if did not in ids_set:
+        return
+    ids_set.discard(did)
+    NO_ENTREGADAS_JSON.parent.mkdir(parents=True, exist_ok=True)
+    _write_json(NO_ENTREGADAS_JSON, sorted(ids_set))
+    logger.info("No entregada: quitada marca delivery_id=%s (foto de entrega subida)", did)
+
+
+def _order_has_entrega_photo(codigo: str) -> bool:
+    """True si la orden tiene al menos una foto en uploads/{codigo}/entrega/."""
+    if not (codigo or "").strip() or (codigo or "").strip() == "—":
+        return False
+    base = UPLOADS_DIR / _sanitize_codigo(codigo) / "entrega"
+    return base.is_dir() and any(base.iterdir())
+
+
+@app.get("/api/orders")
+def api_get_orders(
+    local: str = Query(..., description="Nombre del local/sede"),
+    fecha: str = Query(..., description="Fecha YYYY-MM-DD"),
+):
+    """Lista órdenes del día para una sede (local), con has_entrega_photo y no_entregada."""
+    orders = _get_orders_for_local_date(local, fecha)
+    no_entregadas = _get_no_entregadas_set()
+    for o in orders:
+        cod = (o.get("Codigo integracion") or "").strip()
+        if cod and cod != "—":
+            o["has_entrega_photo"] = _order_has_entrega_photo(cod)
+        else:
+            o["has_entrega_photo"] = False
+        o["no_entregada"] = (o.get("delivery_id") or "").strip() in no_entregadas
+    return {"orders": orders}
+
+
+@app.get("/api/orders/by-codigo/{codigo:path}")
+def api_get_order_by_codigo(codigo: str):
+    """Devuelve la orden buscando por código de integración o identificador único; fotos y flags has_entrega_photo, no_entregada."""
+    order = _find_order_by_codigo(codigo)
+    cod_integ = (order.get("Codigo integracion") or "").strip() if order else ""
+    fotos_codigo = cod_integ if (cod_integ and cod_integ != "—") else codigo
+    fotos = _get_fotos_for_codigo(fotos_codigo)
+    if order:
+        order["has_entrega_photo"] = _order_has_entrega_photo(fotos_codigo) if fotos_codigo else False
+        order["no_entregada"] = (order.get("delivery_id") or "").strip() in _get_no_entregadas_set()
+    return {"order": order, "fotos": fotos}
+
+
+class NoEntregadaBody(BaseModel):
+    delivery_id: str
+
+
+@app.post("/api/orders/no-entregada")
+def api_mark_no_entregada(body: NoEntregadaBody):
+    """Marca la orden como no entregada (para seguimiento del cajero)."""
+    _mark_no_entregada(body.delivery_id)
+    return {"ok": True, "delivery_id": body.delivery_id.strip()}
+
+
+@app.get("/api/orders/{codigo:path}/fotos")
+def api_get_fotos(codigo: str):
+    """Fotos de la orden agrupadas: entrega, apelación (por canal), respuestas."""
+    return _get_fotos_for_codigo(codigo)
+
+
+@app.post("/api/orders/{codigo:path}/fotos")
+async def api_upload_fotos(
+    codigo: str,
+    group: str = Query(..., description="entrega | apelacion | respuestas"),
+    canal: str = Query("", description="Canal de venta (para group=apelacion)"),
+    files: list[UploadFile] = File(default=[]),
+):
+    """Sube fotos para una orden. group=entrega|apelacion|respuestas; canal solo para apelacion."""
+    if group not in ("entrega", "apelacion", "respuestas"):
+        raise HTTPException(status_code=400, detail="group debe ser entrega, apelacion o respuestas")
+    if not files:
+        raise HTTPException(status_code=400, detail="Envía al menos un archivo")
+    base = UPLOADS_DIR / _sanitize_codigo(codigo)
+    if group == "apelacion":
+        canal_safe = _sanitize_path(canal) if canal else "general"
+        base = base / "apelacion" / canal_safe
+    else:
+        base = base / group
+    base.mkdir(parents=True, exist_ok=True)
+    saved = []
+    for f in files:
+        if not f.filename:
+            continue
+        safe_name = _sanitize_path(f.filename) or "file"
+        path = base / safe_name
+        content = await f.read()
+        path.write_bytes(content)
+        saved.append(safe_name)
+    if group == "entrega" and saved:
+        order = _find_order_by_codigo(codigo)
+        if order:
+            did = (order.get("delivery_id") or "").strip()
+            if did:
+                _unmark_no_entregada(did)
+    return {"saved": saved, "group": group, "canal": canal or None}
+
+
+def _foto_path(codigo: str, group: str, path_rest: str) -> Path:
+    """Ruta física del archivo de foto. path_rest = filename (entrega/respuestas) o canal/filename (apelacion)."""
+    base = UPLOADS_DIR / _sanitize_codigo(codigo)
+    if group == "apelacion":
+        return base / "apelacion" / path_rest
+    return base / group / path_rest
+
+
+@app.get("/api/orders/{codigo:path}/fotos/{group}/{path_rest:path}")
+def api_serve_foto(codigo: str, group: str, path_rest: str):
+    """Sirve un archivo de foto. path_rest = filename (entrega/respuestas) o canal/filename (apelacion)."""
+    path = _foto_path(codigo, group, path_rest)
+    if not path.exists() or not path.is_file():
+        raise HTTPException(status_code=404, detail="Archivo no encontrado")
+    return FileResponse(path)
+
+
+@app.delete("/api/orders/{codigo:path}/fotos/{group}/{path_rest:path}")
+def api_delete_foto(codigo: str, group: str, path_rest: str):
+    """Elimina un archivo de foto de la orden."""
+    path = _foto_path(codigo, group, path_rest)
+    if not path.exists() or not path.is_file():
+        raise HTTPException(status_code=404, detail="Archivo no encontrado")
+    path.unlink()
+    return {"deleted": path_rest}
+
+
+def _report_status_payload() -> dict:
+    """Construye el objeto de estado para el WebSocket (datos desde API deliverys cada 5 min)."""
+    state = _deliverys_scheduler_state
+    now = _now()
+    next_at = state.get("next_run_at")
+    status = state.get("status", "waiting")
+    last_at = state.get("last_report_at")
+    last_error = state.get("last_error")
+    last_filas = state.get("last_filas", 0)
+    interval = state.get("interval_seconds", 300)
+
+    if next_at is None:
+        seconds_until_next = 0
+        message = "Iniciando... Próxima consulta deliverys en breve."
+    elif status == "calling_deliverys":
+        seconds_until_next = interval
+        message = "Llamando API deliverys (fecha hoy, todos los locales)..."
+    elif status == "deliverys_ready":
+        delta = (next_at - now).total_seconds()
+        seconds_until_next = max(0, int(delta))
+        if last_error:
+            message = f"Última consulta deliverys: error ({last_error}). Próxima en {seconds_until_next} s."
+        else:
+            message = f"Deliverys listos ({last_filas} registros). Próxima consulta en {seconds_until_next} s."
+    else:
+        delta = (next_at - now).total_seconds()
+        seconds_until_next = max(0, int(delta))
+        message = f"Próxima consulta deliverys en {seconds_until_next} s."
+
+    return {
+        "status": status,
+        "message": message,
+        "seconds_until_next": seconds_until_next,
+        "next_run_at": next_at.isoformat() if next_at and hasattr(next_at, "isoformat") else None,
+        "last_report_at": last_at.isoformat() if last_at and hasattr(last_at, "isoformat") else None,
+        "last_error": last_error,
+        "last_filas": last_filas,
+        "interval_seconds": interval,
+    }
+
+
+@app.websocket("/report/ws")
+async def report_status_websocket(websocket: WebSocket):
+    """
+    WebSocket para seguir en tiempo real el programador de reportes.
+    Envía cada segundo: estado, mensaje, segundos hasta la próxima consulta,
+    cuándo se llamó el reporte y cuándo estará listo/siguiente consulta.
+    """
+    await websocket.accept()
+    _report_ws_clients.append(websocket)
+    try:
+        while True:
+            payload = _report_status_payload()
+            await websocket.send_json(payload)
+            await asyncio.sleep(1)
+    except WebSocketDisconnect:
+        pass
+    finally:
+        if websocket in _report_ws_clients:
+            _report_ws_clients.remove(websocket)

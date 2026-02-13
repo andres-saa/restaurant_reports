@@ -1,0 +1,6 @@
+{
+  "timezone": "America/Bogota",
+  "open_at": "12:30",
+  "close_at": "00:00",
+  "_comment": "Horario de apertura: open_at a close_at (HH:MM 24h). Si close_at < open_at (ej. 00:00), el local cierra a medianoche. Fuera de este horario no se consultan órdenes."
+}
