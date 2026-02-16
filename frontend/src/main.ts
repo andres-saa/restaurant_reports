@@ -1,3 +1,4 @@
+import 'chart.js/auto'
 import 'primeicons/primeicons.css'
 import 'primeflex/primeflex.css'
 import { createApp } from 'vue'

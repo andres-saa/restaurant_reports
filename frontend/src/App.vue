@@ -4,8 +4,10 @@ import { useRoute } from 'vue-router'
 import SelectButton from 'primevue/selectbutton'
 import Button from 'primevue/button'
 import ConfirmDialog from 'primevue/confirmdialog'
+import { useRoleStore } from '@/stores/role'
 
 const route = useRoute()
+const roleStore = useRoleStore()
 
 const THEME_KEY = 'app-theme'
 type Theme = 'light' | 'dark'
@@ -22,14 +24,31 @@ function todayStr() {
   return new Date().toLocaleDateString('en-CA', { timeZone: 'America/Bogota' })
 }
 
+/** Query base con el rol activo (?user o ?admin) para que la URL siempre lo lleve. */
+const roleQuery = computed(() => {
+  const r = roleStore.role
+  if (!r) return {}
+  return { [r]: '' }
+})
+
 /** Query actual; en "Hoy" y "Todas las sedes" la fecha va siempre a hoy. */
-const navQuery = computed(() => ({ ...route.query }))
-const navQueryHoy = computed(() => ({ ...route.query, fecha: todayStr() }))
-const navQueryConsulta = computed(() => ({ ...route.query, fecha: todayStr() }))
+const navQuery = computed(() => ({ ...route.query, ...roleQuery.value }))
+const navQueryHoy = computed(() => ({ ...route.query, ...roleQuery.value, fecha: todayStr() }))
+const navQueryConsulta = computed(() => ({ ...route.query, ...roleQuery.value, fecha: todayStr() }))
 
 const isHoy = computed(() => route.name === 'hoy')
 const isReportes = computed(() => route.name === 'reportes')
+const isApelar = computed(() => route.name === 'apelar')
+const isMisApelaciones = computed(() => route.name === 'mis-apelaciones')
+const isReembolsos = computed(() => route.name === 'reembolsos')
+const isMisDescuentos = computed(() => route.name === 'mis-descuentos')
 const isTodasSedes = computed(() => route.name === 'consulta')
+const isMarcarApelacion = computed(() => route.name === 'marcar-apelacion')
+const isDescuentos = computed(() => route.name === 'descuentos')
+const isEstadoApelaciones = computed(() => route.name === 'estado-apelaciones')
+const isReporteMaestro = computed(() => route.name === 'reporte-maestro')
+const isInformes = computed(() => route.name === 'informes')
+const isLinksSedes = computed(() => route.name === 'links-sedes')
 const isCredenciales = computed(() => route.name === 'credenciales')
 
 function applyTheme(isDark: boolean) {
@@ -68,35 +87,118 @@ watch(() => route.fullPath, closeSidebar)
 <template>
   <div class="app-layout">
     <header class="app-topbar">
-      <RouterLink to="/" class="app-title">
+      <RouterLink
+        :to="roleStore.isUser() ? { name: 'hoy', query: navQueryHoy } : { name: 'consulta', query: navQueryConsulta }"
+        class="app-title"
+      >
         <img src="/logos/menu_online.png" alt="Pedidos Menu Online" class="app-title-logo" />
         Evidencias y pedidos
       </RouterLink>
-      <nav class="app-nav">
-        <RouterLink
-          :to="{ name: 'hoy', query: navQueryHoy }"
-          class="app-nav-link"
-          :class="{ 'app-nav-link-active': isHoy }"
-        >
-          Hoy
-        </RouterLink>
-        <RouterLink
-          :to="{ name: 'reportes', query: navQuery }"
-          class="app-nav-link"
-          :class="{ 'app-nav-link-active': isReportes }"
-        >
-          Reportes
-        </RouterLink>
-        <RouterLink
-          :to="{ name: 'consulta', query: navQueryConsulta }"
-          class="app-nav-link"
-          :class="{ 'app-nav-link-active': isTodasSedes }"
-        >
-          Todas las sedes
-        </RouterLink>
-        <RouterLink to="/credenciales" class="app-nav-link" :class="{ 'app-nav-link-active': isCredenciales }">
-          Credenciales
-        </RouterLink>
+      <nav v-if="roleStore.hasRole()" class="app-nav">
+        <template v-if="roleStore.isUser()">
+          <RouterLink
+            :to="{ name: 'hoy', query: navQueryHoy }"
+            class="app-nav-link"
+            :class="{ 'app-nav-link-active': isHoy }"
+          >
+            Hoy
+          </RouterLink>
+          <RouterLink
+            :to="{ name: 'apelar', query: navQuery }"
+            class="app-nav-link"
+            :class="{ 'app-nav-link-active': isApelar }"
+          >
+            Apelar
+          </RouterLink>
+          <RouterLink
+            :to="{ name: 'mis-apelaciones', query: navQuery }"
+            class="app-nav-link"
+            :class="{ 'app-nav-link-active': isMisApelaciones }"
+          >
+            Estado de mis apelaciones
+          </RouterLink>
+          <RouterLink
+            :to="{ name: 'mis-descuentos', query: navQuery }"
+            class="app-nav-link"
+            :class="{ 'app-nav-link-active': isMisDescuentos }"
+          >
+            Mis descuentos
+          </RouterLink>
+          <RouterLink
+            :to="{ name: 'reportes', query: navQuery }"
+            class="app-nav-link"
+            :class="{ 'app-nav-link-active': isReportes }"
+          >
+            Reportes
+          </RouterLink>
+        </template>
+        <template v-else-if="roleStore.isAdmin()">
+          <RouterLink
+            :to="{ name: 'consulta', query: navQueryConsulta }"
+            class="app-nav-link"
+            :class="{ 'app-nav-link-active': isTodasSedes }"
+          >
+            Todas las sedes
+          </RouterLink>
+          <RouterLink
+            :to="{ name: 'marcar-apelacion', query: navQuery }"
+            class="app-nav-link"
+            :class="{ 'app-nav-link-active': isMarcarApelacion }"
+          >
+            Marcar para apelación
+          </RouterLink>
+          <RouterLink
+            :to="{ name: 'estado-apelaciones', query: navQuery }"
+            class="app-nav-link"
+            :class="{ 'app-nav-link-active': isEstadoApelaciones }"
+          >
+            Estado apelaciones
+          </RouterLink>
+          <RouterLink
+            :to="{ name: 'reembolsos', query: navQuery }"
+            class="app-nav-link"
+            :class="{ 'app-nav-link-active': isReembolsos }"
+          >
+            Reembolsos
+          </RouterLink>
+          <RouterLink
+            :to="{ name: 'descuentos', query: navQuery }"
+            class="app-nav-link"
+            :class="{ 'app-nav-link-active': isDescuentos }"
+          >
+            Descuentos
+          </RouterLink>
+         
+          <RouterLink
+            :to="{ name: 'reporte-maestro', query: navQuery }"
+            class="app-nav-link"
+            :class="{ 'app-nav-link-active': isReporteMaestro }"
+          >
+            Master
+          </RouterLink>
+
+          <RouterLink
+            :to="{ name: 'informes', query: navQuery }"
+            class="app-nav-link"
+            :class="{ 'app-nav-link-active': isInformes }"
+          >
+            Reportes
+          </RouterLink>
+          <RouterLink
+            :to="{ name: 'links-sedes', query: navQuery }"
+            class="app-nav-link"
+            :class="{ 'app-nav-link-active': isLinksSedes }"
+          >
+            Links sedes
+          </RouterLink>
+          <RouterLink
+            :to="{ name: 'credenciales', query: roleQuery }"
+            class="app-nav-link"
+            :class="{ 'app-nav-link-active': isCredenciales }"
+          >
+            Credenciales
+          </RouterLink>
+        </template>
       </nav>
       <SelectButton
         v-model="theme"
@@ -108,7 +210,7 @@ watch(() => route.fullPath, closeSidebar)
     </header>
 
     <!-- Móvil: botón fijo en el borde izquierdo, centrado vertical (viewport) -->
-    <div class="app-sidebar-trigger-wrap">
+    <div v-if="roleStore.hasRole()" class="app-sidebar-trigger-wrap">
       <Button
         class="app-sidebar-trigger"
         icon="pi pi-bars" style="border-radius: 0 .5rem .5rem 0;"
@@ -125,43 +227,129 @@ watch(() => route.fullPath, closeSidebar)
       @click="closeSidebar"
     />
     <aside
+      v-if="roleStore.hasRole()"
       class="app-sidebar"
       :class="{ 'app-sidebar-open': sidebarOpen }"
       aria-label="Menú de navegación"
     >
       <div class="app-sidebar-inner">
-        <RouterLink to="/" class="app-sidebar-title" @click="closeSidebar">
+        <RouterLink
+          :to="roleStore.isUser() ? { name: 'hoy', query: navQueryHoy } : { name: 'consulta', query: navQueryConsulta }"
+          class="app-sidebar-title"
+          @click="closeSidebar"
+        >
           <img src="/logos/menu_online.png" alt="Pedidos Menu Online" class="app-sidebar-logo" />
           Evidencias y pedidos
         </RouterLink>
-        <nav class="app-sidebar-nav">
-          <RouterLink
-            :to="{ name: 'hoy', query: navQueryHoy }"
-            class="app-sidebar-link"
-            :class="{ 'app-sidebar-link-active': isHoy }"
-            @click="closeSidebar"
-          >
-            Hoy
-          </RouterLink>
-          <RouterLink
-            :to="{ name: 'reportes', query: navQuery }"
-            class="app-sidebar-link"
-            :class="{ 'app-sidebar-link-active': isReportes }"
-            @click="closeSidebar"
-          >
-            Reportes
-          </RouterLink>
-          <RouterLink
-            :to="{ name: 'consulta', query: navQueryConsulta }"
-            class="app-sidebar-link"
-            :class="{ 'app-sidebar-link-active': isTodasSedes }"
-            @click="closeSidebar"
-          >
-            Todas las sedes
-          </RouterLink>
-          <RouterLink to="/credenciales" class="app-sidebar-link" :class="{ 'app-sidebar-link-active': isCredenciales }" @click="closeSidebar">
-            Credenciales
-          </RouterLink>
+        <nav v-if="roleStore.hasRole()" class="app-sidebar-nav">
+          <template v-if="roleStore.isUser()">
+            <RouterLink
+              :to="{ name: 'hoy', query: navQueryHoy }"
+              class="app-sidebar-link"
+              :class="{ 'app-sidebar-link-active': isHoy }"
+              @click="closeSidebar"
+            >
+              Hoy
+            </RouterLink>
+            <RouterLink
+              :to="{ name: 'apelar', query: navQuery }"
+              class="app-sidebar-link"
+              :class="{ 'app-sidebar-link-active': isApelar }"
+              @click="closeSidebar"
+            >
+              Apelar
+            </RouterLink>
+            <RouterLink
+              :to="{ name: 'mis-descuentos', query: navQuery }"
+              class="app-sidebar-link"
+              :class="{ 'app-sidebar-link-active': isMisDescuentos }"
+              @click="closeSidebar"
+            >
+              Mis descuentos
+            </RouterLink>
+            <RouterLink
+              :to="{ name: 'reportes', query: navQuery }"
+              class="app-sidebar-link"
+              :class="{ 'app-sidebar-link-active': isReportes }"
+              @click="closeSidebar"
+            >
+              Reportes
+            </RouterLink>
+          </template>
+          <template v-else-if="roleStore.isAdmin()">
+            <RouterLink
+              :to="{ name: 'consulta', query: navQueryConsulta }"
+              class="app-sidebar-link"
+              :class="{ 'app-sidebar-link-active': isTodasSedes }"
+              @click="closeSidebar"
+            >
+              Todas las sedes
+            </RouterLink>
+            <RouterLink
+              :to="{ name: 'marcar-apelacion', query: navQuery }"
+              class="app-sidebar-link"
+              :class="{ 'app-sidebar-link-active': isMarcarApelacion }"
+              @click="closeSidebar"
+            >
+              Marcar para apelación
+            </RouterLink>
+            <RouterLink
+              :to="{ name: 'estado-apelaciones', query: navQuery }"
+              class="app-sidebar-link"
+              :class="{ 'app-sidebar-link-active': isEstadoApelaciones }"
+              @click="closeSidebar"
+            >
+              Estado apelaciones
+            </RouterLink>
+            <RouterLink
+              :to="{ name: 'reembolsos', query: navQuery }"
+              class="app-sidebar-link"
+              :class="{ 'app-sidebar-link-active': isReembolsos }"
+              @click="closeSidebar"
+            >
+              Reembolsos
+            </RouterLink>
+            <RouterLink
+              :to="{ name: 'descuentos', query: navQuery }"
+              class="app-sidebar-link"
+              :class="{ 'app-sidebar-link-active': isDescuentos }"
+              @click="closeSidebar"
+            >
+              Descuentos
+            </RouterLink>
+            <RouterLink
+              :to="{ name: 'informes', query: navQuery }"
+              class="app-sidebar-link"
+              :class="{ 'app-sidebar-link-active': isInformes }"
+              @click="closeSidebar"
+            >
+              Reportes
+            </RouterLink>
+            <RouterLink
+              :to="{ name: 'reporte-maestro', query: navQuery }"
+              class="app-sidebar-link"
+              :class="{ 'app-sidebar-link-active': isReporteMaestro }"
+              @click="closeSidebar"
+            >
+              Reporte maestro
+            </RouterLink>
+            <RouterLink
+              :to="{ name: 'links-sedes', query: navQuery }"
+              class="app-sidebar-link"
+              :class="{ 'app-sidebar-link-active': isLinksSedes }"
+              @click="closeSidebar"
+            >
+              Links sedes
+            </RouterLink>
+            <RouterLink
+              :to="{ name: 'credenciales', query: roleQuery }"
+              class="app-sidebar-link"
+              :class="{ 'app-sidebar-link-active': isCredenciales }"
+              @click="closeSidebar"
+            >
+              Credenciales
+            </RouterLink>
+          </template>
         </nav>
         <div class="app-sidebar-theme">
           <span class="app-sidebar-theme-label">Tema</span>

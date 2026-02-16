@@ -56,6 +56,7 @@ from app.config import (
     DELIVERYS_CACHE_DIR,
     UPLOADS_DIR,
     NO_ENTREGADAS_JSON,
+    APELACIONES_JSON,
     HORARIOS_JSON,
 )
 
@@ -102,7 +103,12 @@ app = FastAPI(
 )
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "https://fotopedidos.salchimonster.com",
+        "http://fotopedidos.salchimonster.com",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -1336,10 +1342,21 @@ def _sanitize_codigo(codigo: str) -> str:
 
 # --- Deliverys API (órdenes por local, cada 5 min; reemplaza Excel para listado) ---
 
+
+def _clean_privacy_name(s: str) -> str:
+    """Quita 'privacy protection' y asteriscos de nombres (ej. Didi). Deja solo la parte visible."""
+    if not s or not isinstance(s, str):
+        return ""
+    s = s.strip()
+    s = re.sub(r"privacy\s+protection\s*", "", s, flags=re.IGNORECASE)
+    s = re.sub(r"\*+", "", s)
+    return " ".join(s.split()).strip()
+
+
 def _delivery_row_to_order(row: dict) -> dict:
     """Convierte un ítem de la API obtenerDeliverysPorLocalSimple al formato orden (frontend)."""
-    nombres = (row.get("delivery_nombres") or "").strip()
-    apellidos = (row.get("delivery_apellidos") or "").strip()
+    nombres = _clean_privacy_name((row.get("delivery_nombres") or "").strip())
+    apellidos = _clean_privacy_name((row.get("delivery_apellidos") or "").strip())
     if apellidos and apellidos != ".":
         cliente = f"{nombres} {apellidos}".strip()
     else:
@@ -1615,20 +1632,121 @@ def _order_has_entrega_photo(codigo: str) -> bool:
     return base.is_dir() and any(base.iterdir())
 
 
+# --- Apelaciones (marcar para apelar / apelar / reporte) ---
+
+def _read_apelaciones() -> dict:
+    data = _read_json(APELACIONES_JSON, {"items": []})
+    if not isinstance(data, dict) or "items" not in data:
+        return {"items": []}
+    if not isinstance(data["items"], list):
+        return {"items": []}
+    return data
+
+
+def _write_apelaciones(data: dict) -> None:
+    APELACIONES_JSON.parent.mkdir(parents=True, exist_ok=True)
+    _write_json(APELACIONES_JSON, data)
+
+
+def _get_apelacion_by_codigo(codigo: str) -> dict | None:
+    data = _read_apelaciones()
+    cod = (codigo or "").strip()
+    for item in data.get("items", []):
+        if (item.get("codigo") or "").strip() == cod:
+            return item
+    return None
+
+
+def _order_has_respuesta_foto(codigo: str) -> bool:
+    """True si la orden tiene al menos una foto en respuestas (respuesta del canal)."""
+    if not (codigo or "").strip():
+        return False
+    base = UPLOADS_DIR / _sanitize_codigo(codigo) / "respuestas"
+    return base.is_dir() and any(f for f in base.iterdir() if f.is_file())
+
+
+def _get_orders_for_local_date_range(local: str, fecha_desde: str, fecha_hasta: str) -> list[dict]:
+    """Órdenes para un local en el rango de fechas (inclusive). Cada orden tiene Fecha del día."""
+    desde = (fecha_desde or "").strip()[:10]
+    hasta = (fecha_hasta or "").strip()[:10]
+    if not desde or not hasta:
+        return []
+    if desde > hasta:
+        desde, hasta = hasta, desde  # normalizar orden
+    from datetime import datetime, timedelta
+    try:
+        d1 = datetime.strptime(desde, "%Y-%m-%d").date()
+        d2 = datetime.strptime(hasta, "%Y-%m-%d").date()
+    except ValueError:
+        return []
+    orders = []
+    current = d1
+    while current <= d2:
+        date_str = current.strftime("%Y-%m-%d")
+        day_orders = _get_orders_for_local_date(local, date_str)
+        for o in day_orders:
+            o["Fecha"] = date_str  # asegurar fecha del día
+            orders.append(o)
+        current += timedelta(days=1)
+    return orders
+
+
 @app.get("/api/orders")
 def api_get_orders(
-    local: str = Query(..., description="Nombre del local/sede"),
-    fecha: str = Query(..., description="Fecha YYYY-MM-DD"),
+    local: str | None = Query(None, description="Nombre de un solo local/sede (opcional si se usa locales)"),
+    locales: str | None = Query(None, description="Nombres de locales separados por coma; procesa todas las sedes en una sola petición"),
+    fecha: str | None = Query(None, description="Fecha YYYY-MM-DD (un solo día); opcional si se usan fecha_desde y fecha_hasta"),
+    fecha_desde: str = Query("", description="Inicio rango YYYY-MM-DD"),
+    fecha_hasta: str = Query("", description="Fin rango YYYY-MM-DD"),
+    exclude_marcadas_apelacion: bool = Query(False, description="Excluir órdenes ya marcadas para apelación"),
 ):
-    """Lista órdenes del día para una sede (local), con has_entrega_photo y no_entregada."""
-    orders = _get_orders_for_local_date(local, fecha)
+    """Lista órdenes. Con 'locales' se procesan todas las sedes en el backend (recomendado para marcar apelación)."""
+    # Determinar lista de sedes: locales (varias) o local (una)
+    sede_names: list[str] = []
+    if (locales or "").strip():
+        sede_names = [s.strip() for s in locales.strip().split(",") if s.strip()]
+    if not sede_names and (local or "").strip():
+        sede_names = [local.strip()]
+    if not sede_names:
+        raise HTTPException(status_code=400, detail="Indica 'local' o 'locales' (nombres separados por coma)")
+
+    # Prioridad: rango (fecha_desde + fecha_hasta) sobre un solo día (fecha)
+    use_range = (fecha_desde or "").strip() and (fecha_hasta or "").strip()
+    desde = (fecha_desde or "").strip()[:10]
+    hasta = (fecha_hasta or "").strip()[:10]
+    f_single = (fecha or "").strip()[:10]
+
+    orders: list[dict] = []
+    for sede in sede_names:
+        if use_range:
+            site_orders = _get_orders_for_local_date_range(sede, desde, hasta)
+        else:
+            if not f_single:
+                continue
+            site_orders = _get_orders_for_local_date(sede, f_single)
+        for o in site_orders:
+            o["Local"] = sede
+            o["rowKey"] = f"{sede}-{(o.get('Codigo integracion') or '').strip()}-{o.get('Fecha') or ''}"
+            orders.append(o)
+
+    if not use_range and not f_single:
+        return {"orders": []}
+
+    if exclude_marcadas_apelacion:
+        apelaciones = _read_apelaciones()
+        codigos_marcados = {(item.get("codigo") or "").strip() for item in apelaciones.get("items", [])}
+        orders = [o for o in orders if (o.get("Codigo integracion") or "").strip() not in codigos_marcados]
+
     no_entregadas = _get_no_entregadas_set()
     for o in orders:
         cod = (o.get("Codigo integracion") or "").strip()
         if cod and cod != "—":
             o["has_entrega_photo"] = _order_has_entrega_photo(cod)
+            fotos = _get_fotos_for_codigo(cod)
+            o["fotos_entrega"] = fotos.get("entrega", [])
         else:
             o["has_entrega_photo"] = False
+            o["fotos_entrega"] = []
         o["no_entregada"] = (o.get("delivery_id") or "").strip() in no_entregadas
     return {"orders": orders}
 
@@ -1657,6 +1775,550 @@ def api_mark_no_entregada(body: NoEntregadaBody):
     return {"ok": True, "delivery_id": body.delivery_id.strip()}
 
 
+class MarcarApelacionBody(BaseModel):
+    codigo: str
+    canal: str
+    delivery_id: str
+    monto_descontado: float
+    local: str = ""
+    fecha: str = ""
+
+
+class ApelarBody(BaseModel):
+    codigo: str
+    monto_devuelto: float
+
+
+@app.post("/api/apelaciones/marcar")
+def api_marcar_apelacion(body: MarcarApelacionBody):
+    """Admin: marca una orden para apelación con el monto que nos descontó el canal."""
+    data = _read_apelaciones()
+    cod = (body.codigo or "").strip()
+    if not cod:
+        raise HTTPException(status_code=400, detail="codigo requerido")
+    items = data.get("items", [])
+    local = (body.local or "").strip()
+    fecha = (body.fecha or "").strip()
+    # Actualizar si ya existe
+    for item in items:
+        if (item.get("codigo") or "").strip() == cod:
+            item["canal"] = (body.canal or "").strip()
+            item["delivery_id"] = (body.delivery_id or "").strip()
+            item["monto_descontado"] = float(body.monto_descontado) if body.monto_descontado is not None else 0
+            item["fecha_marcado"] = _now().isoformat()
+            item["local"] = local
+            item["fecha"] = fecha
+            _write_apelaciones(data)
+            return {"ok": True}
+    items.append({
+        "codigo": cod,
+        "canal": (body.canal or "").strip(),
+        "delivery_id": (body.delivery_id or "").strip(),
+        "monto_descontado": float(body.monto_descontado) if body.monto_descontado is not None else 0,
+        "monto_devuelto": None,
+        "fecha_marcado": _now().isoformat(),
+        "fecha_apelado": None,
+        "local": local,
+        "fecha": fecha,
+    })
+    data["items"] = items
+    _write_apelaciones(data)
+    return {"ok": True}
+
+
+@app.get("/api/apelaciones/pendientes")
+def api_apelaciones_pendientes(
+    local: str = Query(..., description="Nombre del local/sede"),
+    fecha: str = Query("", description="Fecha YYYY-MM-DD (un día; opcional si usas fecha_desde/fecha_hasta)"),
+    fecha_desde: str = Query("", description="Inicio rango YYYY-MM-DD"),
+    fecha_hasta: str = Query("", description="Fin rango YYYY-MM-DD"),
+):
+    """Órdenes marcadas para apelación que aún no tienen respuesta (foto + monto_devuelto). Para la vista Apelar del user."""
+    apelaciones = _read_apelaciones()
+    if (fecha_desde or "").strip() and (fecha_hasta or "").strip():
+        orders = _get_orders_for_local_date_range(local, fecha_desde.strip()[:10], fecha_hasta.strip()[:10])
+    else:
+        date_str = (fecha or "").strip()[:10] or _get_today_colombia()
+        orders = _get_orders_for_local_date(local, date_str)
+    codigos_marcados = {(item.get("codigo") or "").strip() for item in apelaciones.get("items", [])}
+    pendientes = []
+    for o in orders:
+        cod = (o.get("Codigo integracion") or "").strip()
+        if cod not in codigos_marcados:
+            continue
+        ap = _get_apelacion_by_codigo(cod)
+        if not ap or ap.get("monto_devuelto") is not None:
+            continue  # ya apelada
+        if ap.get("descuento_confirmado"):
+            continue
+        if ap.get("sede_decidio_no_apelar"):
+            continue  # sede decidió no apelar; va al apartado Descuentos
+        o["apelacion_monto_descontado"] = ap.get("monto_descontado")
+        o["apelacion_canal"] = ap.get("canal")
+        fotos = _get_fotos_for_codigo(cod)
+        o["fotos_entrega"] = fotos.get("entrega", [])
+        pendientes.append(o)
+    return {"orders": pendientes}
+
+
+@app.post("/api/apelaciones/apelar")
+async def api_apelar(
+    codigo: str = Query(...),
+    monto_devuelto: float = Query(...),
+    fecha_estimada_devolucion: str = Query("", description="YYYY-MM-DD cuándo nos devolverán el dinero"),
+    files: list[UploadFile] = File(default=[]),
+):
+    """User: sube foto de la respuesta del canal, monto que devolverán y fecha estimada de devolución."""
+    cod = (codigo or "").strip()
+    if not cod:
+        raise HTTPException(status_code=400, detail="codigo requerido")
+    ap = _get_apelacion_by_codigo(cod)
+    if not ap:
+        raise HTTPException(status_code=404, detail="Orden no marcada para apelación")
+    if ap.get("monto_devuelto") is not None:
+        raise HTTPException(status_code=400, detail="Esta orden ya fue apelada")
+    data = _read_apelaciones()
+    fecha_est = (fecha_estimada_devolucion or "").strip()[:10] or None
+    for item in data.get("items", []):
+        if (item.get("codigo") or "").strip() == cod:
+            item["monto_devuelto"] = float(monto_devuelto)
+            item["fecha_estimada_devolucion"] = fecha_est
+            item["fecha_apelado"] = _now().isoformat()
+            break
+    _write_apelaciones(data)
+    # Guardar fotos en respuestas
+    if files:
+        base = UPLOADS_DIR / _sanitize_codigo(cod) / "respuestas"
+        base.mkdir(parents=True, exist_ok=True)
+        for f in files:
+            if f.filename:
+                safe_name = _sanitize_path(f.filename) or "file"
+                content = await f.read()
+                (base / safe_name).write_bytes(content)
+    return {"ok": True}
+
+
+class NoApelarBody(BaseModel):
+    codigo: str
+
+
+@app.post("/api/apelaciones/no-apelar")
+def api_no_apelar(body: NoApelarBody):
+    """La sede decide no apelar: no se descuenta de una, pasa al apartado Descuentos con etiqueta 'La sede decidió no apelar'."""
+    cod = (body.codigo or "").strip()
+    if not cod:
+        raise HTTPException(status_code=400, detail="codigo requerido")
+    ap = _get_apelacion_by_codigo(cod)
+    if not ap:
+        raise HTTPException(status_code=404, detail="Orden no encontrada en apelaciones")
+    if ap.get("monto_devuelto") is not None:
+        raise HTTPException(status_code=400, detail="Esta orden ya fue apelada")
+    data = _read_apelaciones()
+    for item in data.get("items", []):
+        if (item.get("codigo") or "").strip() == cod:
+            item["sede_decidio_no_apelar"] = True
+            break
+    _write_apelaciones(data)
+    return {"ok": True}
+
+
+@app.get("/api/apelaciones/reembolsos-pendientes")
+def api_reembolsos_pendientes(
+    local: str = Query("", description="Filtrar por local"),
+    fecha_desde: str = Query("", description="YYYY-MM-DD"),
+    fecha_hasta: str = Query("", description="YYYY-MM-DD"),
+):
+    """Órdenes apeladas (con monto_devuelto) que aún no están marcadas como reembolsadas."""
+    apelaciones = _read_apelaciones()
+    items = [i for i in apelaciones.get("items", []) if i.get("monto_devuelto") is not None and i.get("reembolsado") is not True]
+    if local:
+        items = [i for i in items if (i.get("local") or "").strip() == local.strip()]
+    if fecha_desde:
+        items = [i for i in items if (i.get("fecha") or "") >= fecha_desde]
+    if fecha_hasta:
+        items = [i for i in items if (i.get("fecha") or "") <= fecha_hasta]
+    return {"items": items}
+
+
+class ReembolsarBody(BaseModel):
+    codigo: str
+    mismo_valor: bool = True  # True = nos devolvieron monto_devuelto; False = valor diferente
+    monto_reembolsado: float | None = None  # Solo si mismo_valor=False
+    fecha_reembolso: str = ""  # YYYY-MM-DD
+
+
+@app.post("/api/apelaciones/reembolsar")
+def api_reembolsar(body: ReembolsarBody):
+    """Marca la orden como reembolsada."""
+    cod = (body.codigo or "").strip()
+    if not cod:
+        raise HTTPException(status_code=400, detail="codigo requerido")
+    ap = _get_apelacion_by_codigo(cod)
+    if not ap:
+        raise HTTPException(status_code=404, detail="Orden no encontrada en apelaciones")
+    if ap.get("monto_devuelto") is None:
+        raise HTTPException(status_code=400, detail="La orden no tiene monto_devuelto")
+    if ap.get("reembolsado"):
+        raise HTTPException(status_code=400, detail="Esta orden ya fue marcada como reembolsada")
+    monto = float(ap.get("monto_devuelto", 0)) if body.mismo_valor else (float(body.monto_reembolsado or 0))
+    data = _read_apelaciones()
+    for item in data.get("items", []):
+        if (item.get("codigo") or "").strip() == cod:
+            item["reembolsado"] = True
+            item["fecha_reembolso"] = (body.fecha_reembolso or "").strip()[:10] or _now().strftime("%Y-%m-%d")
+            item["monto_reembolsado"] = monto
+            item["mismo_valor"] = body.mismo_valor
+            break
+    _write_apelaciones(data)
+    return {"ok": True}
+
+
+def _calcular_perdida(item: dict) -> float:
+    """Perdida = monto_descontado - lo que nos devolvieron (monto_reembolsado si reembolsado, else monto_devuelto)."""
+    descontado = float(item.get("monto_descontado") or 0)
+    if item.get("reembolsado"):
+        devuelto = float(item.get("monto_reembolsado") or 0)
+    else:
+        devuelto = float(item.get("monto_devuelto") or 0) if item.get("monto_devuelto") is not None else 0
+    return max(0, descontado - devuelto)
+
+
+@app.get("/api/apelaciones/estado-admin")
+def api_apelaciones_estado_admin(
+    local: str = Query("", description="Filtrar por sede"),
+    fecha_desde: str = Query("", description="YYYY-MM-DD"),
+    fecha_hasta: str = Query("", description="YYYY-MM-DD"),
+):
+    """Admin: estado de todas las apelaciones (pendiente apelar, apelada, reembolsada, descuento confirmado)."""
+    apelaciones = _read_apelaciones()
+    items = []
+    for item in apelaciones.get("items", []):
+        if local and (item.get("local") or "").strip() != local.strip():
+            continue
+        if fecha_desde and (item.get("fecha") or "") < fecha_desde:
+            continue
+        if fecha_hasta and (item.get("fecha") or "") > fecha_hasta:
+            continue
+        out = dict(item)
+        perdida = _calcular_perdida(item)
+        out["perdida"] = round(perdida, 2)
+        # Lista de estados: reembolso, descuento, y siempre mostrar "La sede decidió no apelar" si aplica
+        estados = []
+        if item.get("reembolsado"):
+            estados.append("reembolsada")
+        if item.get("descuento_confirmado"):
+            estados.append("descuento_confirmado")
+        if item.get("sede_decidio_no_apelar"):
+            estados.append("sede_decidio_no_apelar")
+        if not estados:
+            if item.get("monto_devuelto") is not None:
+                estados = ["apelada"]
+            else:
+                estados = ["pendiente_apelar"]
+        out["estados"] = estados
+        out["estado"] = estados[-1]  # último para compatibilidad y orden por defecto
+        items.append(out)
+    return {"items": items}
+
+
+@app.get("/api/apelaciones/descuentos")
+def api_apelaciones_descuentos(
+    local: str = Query("", description="Filtrar por sede"),
+    fecha_desde: str = Query("", description="YYYY-MM-DD"),
+    fecha_hasta: str = Query("", description="YYYY-MM-DD"),
+    solo_pendientes: bool = Query(True, description="Solo pendientes de confirmar descuento en nómina"),
+    solo_confirmados: bool = Query(False, description="Solo ya descontados en nómina (para que la sede vea sus descuentos)"),
+):
+    """Órdenes con pérdida a descontar a la sede. Incluye las que la sede decidió no apelar (sede_decidio_no_apelar) y las apeladas con pérdida. El admin debe marcar 'Confirmar descuento en nómina' cuando realmente descuente el dinero."""
+    apelaciones = _read_apelaciones()
+    items = []
+    for item in apelaciones.get("items", []):
+        perdida = _calcular_perdida(item)
+        if perdida <= 0:
+            continue
+        if local and (item.get("local") or "").strip() != local.strip():
+            continue
+        if fecha_desde and (item.get("fecha") or "") < fecha_desde:
+            continue
+        if fecha_hasta and (item.get("fecha") or "") > fecha_hasta:
+            continue
+        if solo_confirmados:
+            if not item.get("descuento_confirmado"):
+                continue
+        elif solo_pendientes and item.get("descuento_confirmado"):
+            continue
+        out = dict(item)
+        out["perdida"] = round(perdida, 2)
+        items.append(out)
+    return {"items": items}
+
+
+class ConfirmarDescuentoBody(BaseModel):
+    codigo: str
+
+
+@app.post("/api/apelaciones/confirmar-descuento")
+def api_confirmar_descuento(body: ConfirmarDescuentoBody):
+    """Marca que ya se descontó en nómina a la sede por esta pérdida."""
+    cod = (body.codigo or "").strip()
+    if not cod:
+        raise HTTPException(status_code=400, detail="codigo requerido")
+    ap = _get_apelacion_by_codigo(cod)
+    if not ap:
+        raise HTTPException(status_code=404, detail="Orden no encontrada en apelaciones")
+    perdida = _calcular_perdida(ap)
+    if perdida <= 0:
+        raise HTTPException(status_code=400, detail="Esta orden no tiene pérdida a descontar")
+    data = _read_apelaciones()
+    for item in data.get("items", []):
+        if (item.get("codigo") or "").strip() == cod:
+            item["descuento_confirmado"] = True
+            item["fecha_descuento_confirmado"] = _now().strftime("%Y-%m-%d")
+            break
+    _write_apelaciones(data)
+    return {"ok": True}
+
+
+@app.get("/api/informes")
+def api_informes(
+    fecha_desde: str = Query(..., description="YYYY-MM-DD"),
+    fecha_hasta: str = Query(..., description="YYYY-MM-DD"),
+):
+    """Métricas y series para la sección Reportes: órdenes, apelaciones, reembolsos, pérdida por día/sede/canal."""
+    desde = (fecha_desde or "").strip()[:10]
+    hasta = (fecha_hasta or "").strip()[:10]
+    if not desde or not hasta:
+        raise HTTPException(status_code=400, detail="fecha_desde y fecha_hasta requeridos (YYYY-MM-DD)")
+    from collections import defaultdict
+
+    # Órdenes por día, sede y canal (desde cache deliverys)
+    ordenes_por_dia: dict[str, int] = defaultdict(int)
+    ordenes_por_sede: dict[str, int] = defaultdict(int)
+    ordenes_por_canal: dict[str, int] = defaultdict(int)
+    locales_data = _locales_list_for_iteration()
+    total_ordenes = 0
+    for item in locales_data:
+        local_id = _locale_id(item) if isinstance(item, dict) else ""
+        local_name = _locale_name(item)
+        if not local_id:
+            continue
+        local_dir = DELIVERYS_CACHE_DIR / local_id
+        if not local_dir.is_dir():
+            continue
+        for json_file in sorted(local_dir.glob("*.json")):
+            date_str = json_file.stem
+            if date_str < desde or date_str > hasta:
+                continue
+            cached = _read_json(json_file, {})
+            data = cached.get("data") if isinstance(cached.get("data"), list) else []
+            for row in data:
+                order = _delivery_row_to_order(row)
+                cod = (order.get("Codigo integracion") or "").strip()
+                if not cod or cod == "—":
+                    continue
+                total_ordenes += 1
+                ordenes_por_dia[date_str] += 1
+                ordenes_por_sede[local_name] += 1
+                canal = (order.get("Canal de delivery") or "").strip() or "—"
+                ordenes_por_canal[canal] += 1
+
+    # Apelaciones en rango: totales y por día/sede/canal
+    apelaciones = _read_apelaciones()
+    items_ap = [i for i in apelaciones.get("items", []) if (i.get("fecha") or "") >= desde and (i.get("fecha") or "") <= hasta]
+    apelaciones_por_dia: dict[str, int] = defaultdict(int)
+    apelaciones_por_sede: dict[str, int] = defaultdict(int)
+    apelaciones_por_canal: dict[str, int] = defaultdict(int)
+    reembolsos_por_dia: dict[str, int] = defaultdict(int)
+    perdida_por_dia: dict[str, float] = defaultdict(float)
+    perdida_por_sede: dict[str, float] = defaultdict(float)
+    perdida_por_canal: dict[str, float] = defaultdict(float)
+    total_descontado = 0.0
+    total_devuelto = 0.0
+    total_reembolsos = 0
+    for i in items_ap:
+        f = (i.get("fecha") or "")[:10]
+        loc = (i.get("local") or "").strip() or "—"
+        can = (i.get("canal") or "").strip() or "—"
+        apelaciones_por_dia[f] += 1
+        apelaciones_por_sede[loc] += 1
+        apelaciones_por_canal[can] += 1
+        perd = _calcular_perdida(i)
+        perdida_por_dia[f] += perd
+        perdida_por_sede[loc] += perd
+        perdida_por_canal[can] += perd
+        total_descontado += float(i.get("monto_descontado") or 0)
+        if i.get("monto_devuelto") is not None:
+            total_devuelto += float(i.get("monto_devuelto") or 0)
+        if i.get("reembolsado"):
+            total_reembolsos += 1
+            reembolsos_por_dia[f] += 1
+    total_perdido = round(total_descontado - total_devuelto, 2)
+    total_descontado = round(total_descontado, 2)
+    total_devuelto = round(total_devuelto, 2)
+
+    # Fechas en rango para por_dia
+    start = datetime.strptime(desde, "%Y-%m-%d").date()
+    end = datetime.strptime(hasta, "%Y-%m-%d").date()
+    por_dia = []
+    d = start
+    while d <= end:
+        key = d.strftime("%Y-%m-%d")
+        por_dia.append({
+            "fecha": key,
+            "ordenes": ordenes_por_dia.get(key, 0),
+            "apelaciones": apelaciones_por_dia.get(key, 0),
+            "reembolsos": reembolsos_por_dia.get(key, 0),
+            "perdida": round(perdida_por_dia.get(key, 0), 2),
+        })
+        d += timedelta(days=1)
+
+    por_sede = [
+        {
+            "local": loc,
+            "ordenes": ordenes_por_sede.get(loc, 0),
+            "apelaciones": apelaciones_por_sede.get(loc, 0),
+            "perdida": round(perdida_por_sede.get(loc, 0), 2),
+        }
+        for loc in sorted(set(ordenes_por_sede) | set(apelaciones_por_sede))
+    ]
+    por_canal = [
+        {
+            "canal": can,
+            "ordenes": ordenes_por_canal.get(can, 0),
+            "apelaciones": apelaciones_por_canal.get(can, 0),
+            "perdida": round(perdida_por_canal.get(can, 0), 2),
+        }
+        for can in sorted(set(ordenes_por_canal) | set(apelaciones_por_canal))
+    ]
+
+    return {
+        "resumen": {
+            "total_ordenes": total_ordenes,
+            "total_apelaciones": len(items_ap),
+            "total_reembolsos": total_reembolsos,
+            "total_descontado_canal": total_descontado,
+            "total_devuelto": total_devuelto,
+            "total_perdida": total_perdido,
+        },
+        "por_dia": por_dia,
+        "por_sede": por_sede,
+        "por_canal": por_canal,
+    }
+
+
+@app.get("/api/apelaciones/reporte")
+def api_apelaciones_reporte(
+    local: str = Query("", description="Filtrar por local"),
+    fecha_desde: str = Query("", description="YYYY-MM-DD"),
+    fecha_hasta: str = Query("", description="YYYY-MM-DD"),
+):
+    """Reporte: total descontado, devuelto y perdido."""
+    apelaciones = _read_apelaciones()
+    items = apelaciones.get("items", [])
+    if local:
+        items = [i for i in items if (i.get("local") or "").strip() == local.strip()]
+    if fecha_desde:
+        items = [i for i in items if (i.get("fecha") or "") >= fecha_desde]
+    if fecha_hasta:
+        items = [i for i in items if (i.get("fecha") or "") <= fecha_hasta]
+    total_descontado = sum(float(item.get("monto_descontado") or 0) for item in items)
+    total_devuelto = sum(float(item.get("monto_devuelto") or 0) for item in items if item.get("monto_devuelto") is not None)
+    total_perdido = total_descontado - total_devuelto
+    return {
+        "total_descontado": round(total_descontado, 2),
+        "total_devuelto": round(total_devuelto, 2),
+        "total_perdido": round(total_perdido, 2),
+        "items": items,
+    }
+
+
+@app.get("/api/reporte-maestro")
+def api_reporte_maestro(
+    local: str = Query("", description="Filtrar por sede (vacío = todas)"),
+    fecha_desde: str = Query(..., description="YYYY-MM-DD"),
+    fecha_hasta: str = Query(..., description="YYYY-MM-DD"),
+):
+    """Admin: reporte maestro con órdenes + apelaciones + fotos (entrega, respuestas) + reembolsos + descuentos."""
+    desde = (fecha_desde or "").strip()[:10]
+    hasta = (fecha_hasta or "").strip()[:10]
+    if not desde or not hasta:
+        raise HTTPException(status_code=400, detail="fecha_desde y fecha_hasta requeridos (YYYY-MM-DD)")
+    locales_data = _locales_list_for_iteration()
+    apelaciones = _read_apelaciones()
+    apelaciones_by_cod = {(a.get("codigo") or "").strip(): a for a in apelaciones.get("items", []) if (a.get("codigo") or "").strip()}
+    rows = []
+    for item in locales_data:
+        local_id = _locale_id(item) if isinstance(item, dict) else ""
+        local_name = _locale_name(item)
+        if not local_id:
+            continue
+        if local and local_name != local.strip():
+            continue
+        local_dir = DELIVERYS_CACHE_DIR / local_id
+        if not local_dir.is_dir():
+            continue
+        for json_file in sorted(local_dir.glob("*.json")):
+            date_str = json_file.stem
+            if date_str < desde or date_str > hasta:
+                continue
+            cached = _read_json(json_file, {})
+            data = cached.get("data") if isinstance(cached.get("data"), list) else []
+            for row in data:
+                order = _delivery_row_to_order(row)
+                cod = (order.get("Codigo integracion") or "").strip()
+                if not cod or cod == "—":
+                    continue
+                ap = apelaciones_by_cod.get(cod)
+                fotos = _get_fotos_for_codigo(cod)
+                perdida = round(_calcular_perdida(ap), 2) if ap else 0
+                estados_apel = []
+                if ap:
+                    if ap.get("reembolsado"):
+                        estados_apel.append("reembolsada")
+                    if ap.get("descuento_confirmado"):
+                        estados_apel.append("descuento_confirmado")
+                    if not estados_apel:
+                        if ap.get("sede_decidio_no_apelar"):
+                            estados_apel = ["sede_decidio_no_apelar"]
+                        elif ap.get("monto_devuelto") is not None:
+                            estados_apel = ["apelada"]
+                        else:
+                            estados_apel = ["pendiente_apelar"]
+                r = {
+                    "local": local_name,
+                    "fecha": date_str,
+                    "codigo": cod,
+                    "canal": order.get("Canal de delivery"),
+                    "cliente": order.get("Cliente"),
+                    "monto_pagado": order.get("Monto pagado"),
+                    "hora": order.get("Hora"),
+                    "delivery_id": order.get("delivery_id"),
+                    "has_entrega_photo": _order_has_entrega_photo(cod),
+                    "fotos_entrega": fotos.get("entrega", []),
+                    "fotos_apelacion": fotos.get("apelacion", {}),
+                    "fotos_respuestas": fotos.get("respuestas", []),
+                    "apelacion": {
+                        "monto_descontado": ap.get("monto_descontado"),
+                        "monto_devuelto": ap.get("monto_devuelto"),
+                        "monto_reembolsado": ap.get("monto_reembolsado"),
+                        "fecha_apelado": ap.get("fecha_apelado"),
+                        "fecha_estimada_devolucion": ap.get("fecha_estimada_devolucion"),
+                        "reembolsado": ap.get("reembolsado"),
+                        "fecha_reembolso": ap.get("fecha_reembolso"),
+                        "descuento_confirmado": ap.get("descuento_confirmado"),
+                        "fecha_descuento_confirmado": ap.get("fecha_descuento_confirmado"),
+                        "fecha_marcado": ap.get("fecha_marcado"),
+                        "sede_decidio_no_apelar": ap.get("sede_decidio_no_apelar"),
+                    } if ap else None,
+                    "estados_apelacion": estados_apel,
+                    "estado_apelacion": estados_apel[-1] if estados_apel else "",
+                    "perdida": perdida,
+                }
+                rows.append(r)
+    rows.sort(key=lambda x: (x.get("fecha") or "", x.get("local") or "", x.get("codigo") or ""))
+    return {"rows": rows}
+
+
 @app.get("/api/orders/{codigo:path}/fotos")
 def api_get_fotos(codigo: str):
     """Fotos de la orden agrupadas: entrega, apelación (por canal), respuestas."""
@@ -1683,12 +2345,18 @@ async def api_upload_fotos(
         base = base / group
     base.mkdir(parents=True, exist_ok=True)
     saved = []
+    max_file_size = 50 * 1024 * 1024  # 50 MB por archivo (alineado con nginx client_max_body_size)
     for f in files:
         if not f.filename:
             continue
+        content = await f.read()
+        if len(content) > max_file_size:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Archivo '{f.filename}' demasiado grande. Máximo 50 MB por imagen.",
+            )
         safe_name = _sanitize_path(f.filename) or "file"
         path = base / safe_name
-        content = await f.read()
         path.write_bytes(content)
         saved.append(safe_name)
     if group == "entrega" and saved:

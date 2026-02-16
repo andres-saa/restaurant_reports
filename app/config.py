@@ -19,5 +19,6 @@ DELIVERY_API_BASE = "http://salchimonster.restaurant.pe/restaurant/api/rest/deli
 DELIVERYS_CACHE_DIR = REPORTS_DIR / "deliverys"
 UPLOADS_DIR = ROOT / "uploads"  # fotos por orden: uploads/{codigo_integracion}/{entrega|apelacion|respuestas}/
 NO_ENTREGADAS_JSON = REPORTS_DIR / "no_entregadas.json"  # lista de delivery_id marcados como no entregada
+APELACIONES_JSON = REPORTS_DIR / "apelaciones.json"  # {items: [{codigo, canal, monto_descontado, monto_devuelto?, ...}]}
 # Horarios de apertura (hora Colombia): solo se consultan órdenes dentro de este horario
 HORARIOS_JSON = REPORTS_DIR / "horarios.json"

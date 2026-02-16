@@ -108,6 +108,12 @@ const uploadGroupLabels: Record<'entrega' | 'apelacion' | 'respuestas', string> 
   apelacion: 'Fotos apelación',
   respuestas: 'Respuestas del canal'
 }
+/** En móvil, si se abrió el modal desde el botón de la fila: solo cámara (no galería). */
+const isMobile = ref(false)
+const UPLOAD_MOBILE_BREAKPOINT = 768
+function updateMobile() {
+  isMobile.value = typeof window !== 'undefined' && window.innerWidth < UPLOAD_MOBILE_BREAKPOINT
+}
 
 const route = useRoute()
 const router = useRouter()
@@ -219,6 +225,10 @@ function syncQueryToUrl() {
 }
 
 onMounted(async () => {
+  updateMobile()
+  if (typeof window !== 'undefined') {
+    window.addEventListener('resize', updateMobile)
+  }
   selectedDate.value = todayStr()
   try {
     const r = await fetch(`${API}/report/locales`)
@@ -246,7 +256,34 @@ watch([selectedLocal, selectedDate], () => {
   if (locales.value.length && (selectedLocal.value || selectedDate.value)) syncQueryToUrl()
 }, { flush: 'post' })
 
+// Reporte de apelaciones (modo Reportes)
+const apelacionesReport = ref<{ total_descontado: number; total_devuelto: number; total_perdido: number } | null>(null)
+const loadingApelaciones = ref(false)
+async function loadApelacionesReport() {
+  if (!reportesCajero.value || !selectedLocal.value || !selectedDate.value) return
+  loadingApelaciones.value = true
+  apelacionesReport.value = null
+  try {
+    const local = encodeURIComponent(selectedLocal.value)
+    const fecha = selectedDate.value
+    const r = await fetch(`${API}/api/apelaciones/reporte?local=${local}&fecha_desde=${fecha}&fecha_hasta=${fecha}`)
+    const data = await r.json()
+    apelacionesReport.value = {
+      total_descontado: data.total_descontado ?? 0,
+      total_devuelto: data.total_devuelto ?? 0,
+      total_perdido: data.total_perdido ?? 0
+    }
+  } catch {
+    apelacionesReport.value = null
+  } finally {
+    loadingApelaciones.value = false
+  }
+}
+
 onBeforeUnmount(() => {
+  if (typeof window !== 'undefined') {
+    window.removeEventListener('resize', updateMobile)
+  }
   if (reportWs) {
     reportWs.close()
     reportWs = null
@@ -263,6 +300,7 @@ async function loadOrders() {
     )
     const data = await r.json()
     orders.value = data.orders ?? []
+    if (reportesCajero.value) loadApelacionesReport()
   } catch (err) {
     orderError.value = (err as Error).message
     orders.value = []
@@ -403,11 +441,22 @@ function openUploadModal(group: 'entrega' | 'apelacion' | 'respuestas') {
   uploadModalVisible.value = true
 }
 
+function openUploadModalForOrder(order: Order, group: 'entrega' | 'apelacion' | 'respuestas') {
+  selectedOrder.value = order
+  loadFotosForOrder(order['Codigo integracion'])
+  uploadGroup.value = group
+  modalFiles.value = []
+  revokePreviewUrls()
+  uploadModalVisible.value = true
+}
+
 function closeUploadModal() {
   revokePreviewUrls()
   modalFiles.value = []
-  const el = document.getElementById('modal-file-input') as HTMLInputElement
-  if (el) el.value = ''
+  const fileEl = document.getElementById('modal-file-input') as HTMLInputElement
+  if (fileEl) fileEl.value = ''
+  const cameraEl = document.getElementById('modal-camera-input') as HTMLInputElement
+  if (cameraEl) cameraEl.value = ''
   uploadModalVisible.value = false
 }
 
@@ -436,6 +485,14 @@ function onModalDropzoneClick() {
   document.getElementById('modal-file-input')?.click()
 }
 
+function onModalGalleryClick() {
+  document.getElementById('modal-file-input')?.click()
+}
+
+function onModalCameraClick() {
+  document.getElementById('modal-camera-input')?.click()
+}
+
 function onModalDragOver(e: DragEvent) {
   e.preventDefault()
   e.stopPropagation()
@@ -459,8 +516,10 @@ function onModalDrop(e: DragEvent) {
 function clearModalFiles() {
   revokePreviewUrls()
   modalFiles.value = []
-  const el = document.getElementById('modal-file-input') as HTMLInputElement
-  if (el) el.value = ''
+  const fileEl = document.getElementById('modal-file-input') as HTMLInputElement
+  if (fileEl) fileEl.value = ''
+  const cameraEl = document.getElementById('modal-camera-input') as HTMLInputElement
+  if (cameraEl) cameraEl.value = ''
 }
 
 async function confirmUpload() {
@@ -492,8 +551,8 @@ async function confirmUpload() {
 
 function fullPhotoUrl(entry: string): string {
   if (entry.startsWith('http')) return entry
-  const base = typeof window !== 'undefined' ? window.location.origin : ''
-  return base + entry
+  const base = API ? API.replace(/\/$/, '') : (typeof window !== 'undefined' ? window.location.origin : '')
+  return base + (entry.startsWith('/') ? entry : '/' + entry)
 }
 
 /** Parsea un valor que puede ser número o string. Acepta "72900.00" (API) o "15.000,50" (europeo). */
@@ -597,7 +656,7 @@ function canalLogoUrl(canal: string | undefined): string | null {
         <div class="flex flex-wrap gap-2 align-items-end search-row">
           <InputText
             v-model="searchCodigo"
-            placeholder="Buscar por código de integración o identificador único"
+            placeholder="Buscar por código o canal"
             class="flex-grow-1 search-input"
             @keyup.enter="searchByCodigo"
           />
@@ -649,7 +708,7 @@ function canalLogoUrl(canal: string | undefined): string | null {
         <Divider />
         <div class="flex flex-wrap gap-3 align-items-end search-row">
           <div class="flex flex-column gap-2 flex-grow-1 search-field">
-            <label for="search">Buscar por código de integración o identificador único</label>
+            <label for="search">Buscar por código o canal</label>
             <InputText
               id="search"
               v-model="searchCodigo"
@@ -665,6 +724,31 @@ function canalLogoUrl(canal: string | undefined): string | null {
             class="btn-touch"
             @click="searchByCodigo"
           />
+        </div>
+      </template>
+    </Card>
+
+    <!-- Card apelaciones (solo en Reportes) -->
+    <Card v-if="reportesCajero" class="mb-3 apelaciones-report-card">
+      <template #title>Apelaciones</template>
+      <template #content>
+        <div v-if="loadingApelaciones" class="flex align-items-center gap-2">
+          <ProgressSpinner style="width: 24px; height: 24px" stroke-width="4" />
+          <span>Cargando...</span>
+        </div>
+        <div v-else-if="apelacionesReport" class="grid apelaciones-stats">
+          <div class="col-12 md:col-4">
+            <div class="apelacion-stat-label">Descontado por canal</div>
+            <div class="apelacion-stat-value text-orange">{{ formatMonto(apelacionesReport.total_descontado) }}</div>
+          </div>
+          <div class="col-12 md:col-4">
+            <div class="apelacion-stat-label">Devuelto</div>
+            <div class="apelacion-stat-value text-green">{{ formatMonto(apelacionesReport.total_devuelto) }}</div>
+          </div>
+          <div class="col-12 md:col-4">
+            <div class="apelacion-stat-label">Perdido</div>
+            <div class="apelacion-stat-value text-red">{{ formatMonto(apelacionesReport.total_perdido) }}</div>
+          </div>
         </div>
       </template>
     </Card>
@@ -702,11 +786,11 @@ function canalLogoUrl(canal: string | undefined): string | null {
             <DataTable
               :value="ordersFiltered"
               :loading="loadingOrders"
-              data-key="delivery_id"
+              data-key="Codigo integracion"
               selection-mode="single"
               v-model:selection="selectedOrder"
               :filters="tableFilters"
-              :globalFilterFields="['Codigo integracion', 'delivery_id', 'delivery_identificadorunico', 'Cliente', 'delivery_celular', 'Canal de delivery', 'Monto pagado', 'Fecha', 'Hora']"
+              :globalFilterFields="['Codigo integracion', 'Canal de delivery']"
               @row-select="(e: { data: Order }) => selectOrder(e.data)"
               class="p-datatable-sm p-datatable-striped orders-table orders-table-scroll"
               scrollable
@@ -714,8 +798,8 @@ function canalLogoUrl(canal: string | undefined): string | null {
               :paginator="true"
               :rows="10"
               :rows-per-page-options="[5, 10, 25, 50]"
-              paginator-template="FirstPageLink PrevPageLink PageLinks NextPageLink LastPageLink RowsPerPageDropdown"
-              current-page-report-template="{first} - {last} de {totalRecords}"
+              paginator-template="CurrentPageReport FirstPageLink PrevPageLink PageLinks NextPageLink LastPageLink RowsPerPageDropdown"
+              current-page-report-template="Mostrando {first} a {last} de {totalRecords} registros — Página {currentPage} de {totalPages}"
             >
               <Column field="Canal de delivery" header="Canal" frozen>
                 <template #body="{ data }">
@@ -738,16 +822,22 @@ function canalLogoUrl(canal: string | undefined): string | null {
                   </div>
                 </template>
               </Column>
-              <Column field="delivery_identificadorunico" header="Identificador único" sortable>
-                <template #body="{ data }">{{ data.delivery_identificadorunico ? `#${data.delivery_identificadorunico}` : '—' }}</template>
-              </Column>
-              <Column field="delivery_id" header="ID delivery" sortable>
-                <template #body="{ data }">{{ data.delivery_id || '—' }}</template>
-              </Column>
               <Column field="Codigo integracion" header="Código integración" sortable />
-              <Column field="Cliente" header="Cliente" />
-              <Column field="Monto pagado" header="Monto" frozen alignFrozen="right">
-                <template #body="{ data }">{{ formatMonto(data['Monto pagado']) }}</template>
+              <Column v-if="isMobile" header="" class="col-upload-foto">
+                <template #body="{ data }">
+                  <Button
+                    v-if="!data.has_entrega_photo"
+                    icon="pi pi-camera"
+                    severity="success"
+                    size="small"
+                    rounded
+                    :text="false"
+                    class="btn-touch"
+                    aria-label="Subir foto de entrega"
+                    @click.stop="openUploadModalForOrder(data, 'entrega')"
+                  />
+                  <span v-else class="order-check order-check-photo" title="Foto cargada"><i class="pi pi-check"></i></span>
+                </template>
               </Column>
               <template #empty>
                 <span class="text-color-secondary">Selecciona sede y fecha y pulsa Cargar pedidos.</span>
@@ -774,12 +864,10 @@ function canalLogoUrl(canal: string | undefined): string | null {
                 />
                 <span>{{ selectedOrder['Canal de delivery'] || '—' }}</span>
               </div>
-              <div class="col-12 sm:col-6 md:col-4"><strong>Identificador único:</strong> {{ selectedOrder.delivery_identificadorunico ? `#${selectedOrder.delivery_identificadorunico}` : '—' }}</div>
-              <div class="col-12 sm:col-6 md:col-4"><strong>ID delivery:</strong> {{ selectedOrder.delivery_id || '—' }}</div>
               <div class="col-12 sm:col-6 md:col-4"><strong>Código integración:</strong> {{ selectedOrder['Codigo integracion'] }}</div>
               <div class="col-12 sm:col-6 md:col-4"><strong>Cliente:</strong> {{ selectedOrder['Cliente'] }}</div>
               <div class="col-12 sm:col-6 md:col-4"><strong>Celular:</strong> {{ selectedOrder.delivery_celular || '—' }}</div>
-              <div class="col-12 sm:col-6 md:col-4"><strong>Monto:</strong> {{ formatMonto(selectedOrder['Monto pagado']) }}</div>
+              <div class="col-12 sm:col-6 md:col-4"><strong>Valor del pedido:</strong> {{ formatMonto(selectedOrder['Monto pagado']) }}</div>
               <div class="col-12 sm:col-6 md:col-4"><strong>Fecha / Hora:</strong> {{ selectedOrder['Fecha'] }} {{ selectedOrder['Hora'] }}</div>
             </div>
             <Message v-if="selectedOrder.no_entregada" severity="warn" class="mb-3">
@@ -815,9 +903,9 @@ function canalLogoUrl(canal: string | undefined): string | null {
                     />
                   </div>
                 </div>
-                <Button label="Subir fotos entrega" icon="pi pi-upload" class="btn-touch btn-upload" @click="openUploadModal('entrega')" />
+                <Button label="Subir fotos entrega" icon="pi pi-upload" severity="success" :text="false" class="btn-touch btn-upload" @click="openUploadModal('entrega')" />
               </TabPanel>
-              <TabPanel value="1" header="2. Fotos apelación">
+              <TabPanel v-if="!uploadOnly" value="1" header="2. Fotos apelación">
                 <p v-if="selectedOrder" class="text-color-secondary text-sm mt-0 mb-2">
                   Apelación al canal de esta orden: <strong>{{ selectedOrder['Canal de delivery'] }}</strong>
                 </p>
@@ -837,9 +925,9 @@ function canalLogoUrl(canal: string | undefined): string | null {
                     />
                   </div>
                 </div>
-                <Button label="Subir fotos apelación" icon="pi pi-upload" class="btn-touch btn-upload" @click="openUploadModal('apelacion')" />
+                <Button label="Subir fotos apelación" icon="pi pi-upload" :text="false" class="btn-touch btn-upload" @click="openUploadModal('apelacion')" />
               </TabPanel>
-              <TabPanel value="2" header="3. Respuestas del canal">
+              <TabPanel v-if="!uploadOnly" value="2" header="3. Respuestas del canal">
                 <div class="fotos-grid mb-2">
                   <div v-for="url in fotos.respuestas" :key="url" class="foto-thumb">
                     <button type="button" class="foto-link" @click="openPhotoModal(url)">
@@ -856,7 +944,7 @@ function canalLogoUrl(canal: string | undefined): string | null {
                     />
                   </div>
                 </div>
-                <Button label="Subir respuestas" icon="pi pi-upload" class="btn-touch btn-upload" @click="openUploadModal('respuestas')" />
+                <Button label="Subir respuestas" icon="pi pi-upload" :text="false" class="btn-touch btn-upload" @click="openUploadModal('respuestas')" />
               </TabPanel>
             </TabView>
           </template>
@@ -903,12 +991,25 @@ function canalLogoUrl(canal: string | undefined): string | null {
           id="modal-file-input"
           type="file"
           multiple
-          accept="image/*"
-          :capture="uploadGroup === 'entrega' ? 'environment' : undefined"
+          accept="image/*,image/heic,image/heif,.heic,.heif"
           class="file-input-hidden"
           @change="onModalFileChange"
         />
+        <input
+          id="modal-camera-input"
+          type="file"
+          multiple
+          accept="image/*,image/heic,image/heif,.heic,.heif"
+          capture="environment"
+          class="file-input-hidden"
+          @change="onModalFileChange"
+        />
+        <div v-if="isMobile" class="upload-mobile-actions">
+          <Button label="Fototeca" icon="pi pi-images" :text="false" class="btn-touch btn-upload-action" @click="onModalGalleryClick" />
+          <Button label="Tomar foto" icon="pi pi-camera" severity="success" :text="false" class="btn-touch btn-upload-action" @click="onModalCameraClick" />
+        </div>
         <div
+          v-else
           class="dropzone"
           :class="{ 'dropzone-active': modalDropzoneActive, 'dropzone-has-files': modalFiles.length }"
           role="button"
@@ -921,6 +1022,13 @@ function canalLogoUrl(canal: string | undefined): string | null {
         >
           <i class="pi pi-cloud-upload dropzone-icon"></i>
           <span class="dropzone-text">{{ modalFiles.length ? `${modalFiles.length} archivo(s). Clic o arrastra para agregar más` : 'Arrastra imágenes aquí o haz clic para elegir' }}</span>
+        </div>
+        <div v-if="isMobile && modalFiles.length" class="mt-2">
+          <span class="text-color-secondary text-sm">Para agregar más:</span>
+          <div class="flex gap-2 mt-1">
+            <Button label="Fototeca" icon="pi pi-images" severity="secondary" size="small" class="btn-touch" @click="onModalGalleryClick" />
+            <Button label="Cámara" icon="pi pi-camera" severity="secondary" size="small" class="btn-touch" @click="onModalCameraClick" />
+          </div>
         </div>
         <div v-if="modalFiles.length" class="flex flex-wrap gap-2 align-items-center mt-2 mb-2">
           <Button label="Limpiar todo" icon="pi pi-times" severity="secondary" size="small" @click="clearModalFiles" />
@@ -957,9 +1065,38 @@ function canalLogoUrl(canal: string | undefined): string | null {
 .report-status-message {
   margin-bottom: 1rem;
 }
+.apelaciones-stats {
+  gap: 1rem;
+}
+.apelacion-stat-label {
+  font-size: 0.9rem;
+  color: var(--p-text-muted-color);
+  margin-bottom: 0.25rem;
+}
+.apelacion-stat-value {
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+.apelacion-stat-value.text-orange {
+  color: var(--p-orange-600, #ea580c);
+}
+.apelacion-stat-value.text-green {
+  color: var(--p-green-600, #16a34a);
+}
+.apelacion-stat-value.text-red {
+  color: var(--p-red-600, #dc2626);
+}
 .text-secondary {
   opacity: 0.9;
   font-size: 0.9rem;
+}
+.col-upload-foto {
+  width: 1%;
+  white-space: nowrap;
+}
+.col-upload-foto :deep(.p-button) {
+  min-width: 2.5rem;
+  min-height: 2.5rem;
 }
 .canal-logo-wrap {
   position: relative;
@@ -1118,6 +1255,15 @@ function canalLogoUrl(canal: string | undefined): string | null {
   opacity: 0;
   overflow: hidden;
   pointer-events: none;
+}
+.upload-mobile-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+.upload-mobile-actions .btn-upload-action {
+  width: 100%;
+  justify-content: center;
 }
 .dropzone {
   display: flex;
@@ -1307,6 +1453,10 @@ function canalLogoUrl(canal: string | undefined): string | null {
 
 /* Modales fullscreen en móvil */
 @media (max-width: 767px) {
+  .upload-mobile-actions .btn-upload-action {
+    min-height: 48px;
+    font-size: 1rem;
+  }
   .upload-dialog :deep(.p-dialog) {
     width: 100vw !important;
     max-width: 100vw !important;
