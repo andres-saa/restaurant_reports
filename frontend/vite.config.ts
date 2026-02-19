@@ -23,6 +23,7 @@ export default defineConfig({
       '/login': { target: 'http://localhost:8000', changeOrigin: true },
       '/cookies': { target: 'http://localhost:8000', changeOrigin: true },
       '/token': { target: 'http://localhost:8000', changeOrigin: true },
+      '/didi': { target: 'http://localhost:8000', changeOrigin: true },
     },
   },
 })

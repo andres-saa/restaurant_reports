@@ -58,6 +58,19 @@ from app.config import (
     NO_ENTREGADAS_JSON,
     APELACIONES_JSON,
     HORARIOS_JSON,
+    DIDI_LOGIN_URL,
+    DIDI_CREDENTIALS_FILE,
+    DIDI_COOKIES_FILE,
+    DIDI_STORE_URL,
+    DIDI_SHOPS_URL,
+    DIDI_SHOPS_JSON,
+    DIDI_NEW_ORDERS_JSON,
+    DIDI_DAILY_ORDERS_JSON,
+    DIDI_BLACKLIST_FILE,
+    DIDI_MANAGER_ORDER_URL,
+    DIDI_STORE_ORDER_HISTORY_URL,
+    DIDI_ORDER_LIST_JSON,
+    DIDI_SYSTEM_MAP_JSON,
 )
 
 @asynccontextmanager
@@ -78,10 +91,15 @@ async def lifespan(app: FastAPI):
     # Login cada 12 h para renovar sesión
     login_refresh_task = asyncio.create_task(_login_refresh_loop())
     logger.info("Login refresh: iniciado (cada 12 h)")
+    # Didi: captura daily-orders cada 5 min (solo en horario de apertura) y aplica reemplazos
+    didi_daily_task = asyncio.create_task(_didi_daily_orders_scheduler_loop())
+    logger.info("Didi daily-orders: iniciado (cada 5 min, respetando horario de apertura)")
+    asyncio.create_task(_run_didi_daily_orders_once())  # ejecutar una vez al arranque (si en horario)
     yield
     locales_task.cancel()
     deliverys_task.cancel()
     login_refresh_task.cancel()
+    didi_daily_task.cancel()
     try:
         await locales_task
     except asyncio.CancelledError:
@@ -92,6 +110,10 @@ async def lifespan(app: FastAPI):
         pass
     try:
         await login_refresh_task
+    except asyncio.CancelledError:
+        pass
+    try:
+        await didi_daily_task
     except asyncio.CancelledError:
         pass
 
@@ -108,7 +130,9 @@ app.add_middleware(
         "http://127.0.0.1:5173",
         "https://fotopedidos.salchimonster.com",
         "http://fotopedidos.salchimonster.com",
+        "null",  # extensión de navegador (Didi Capture)
     ],
+    allow_origin_regex=r"chrome-extension://[a-zA-Z0-9]+",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -154,6 +178,35 @@ def save_cookies(cookies: list[dict]) -> None:
     _write_json(COOKIES_FILE, cookies)
 
 
+def get_didi_credentials() -> dict[str, Any]:
+    """Credenciales Didi (email + password). Por defecto admon.salchimonster@gmail.com / Didi2024."""
+    data = _read_json(DIDI_CREDENTIALS_FILE, {})
+    if data:
+        return data
+    return {"email": "admon.salchimonster@gmail.com", "password": "Didi2024"}
+
+
+def save_didi_credentials(data: dict[str, Any]) -> None:
+    DIDI_CREDENTIALS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    _write_json(DIDI_CREDENTIALS_FILE, data)
+
+
+def get_didi_cookies() -> list[dict]:
+    return _read_json(DIDI_COOKIES_FILE, [])
+
+
+def save_didi_cookies(cookies: list[dict]) -> None:
+    DIDI_COOKIES_FILE.parent.mkdir(parents=True, exist_ok=True)
+    _write_json(DIDI_COOKIES_FILE, cookies)
+
+
+def get_didi_blacklist() -> set[str]:
+    """Devuelve shopId a excluir (sedes que no son Salchimonster)."""
+    data = _read_json(DIDI_BLACKLIST_FILE, {})
+    ids = data.get("shop_ids") if isinstance(data, dict) else []
+    return set(str(x) for x in ids) if ids else set()
+
+
 def get_token() -> str | None:
     """Devuelve el token guardado (data.token del login) o None."""
     data = _read_json(TOKEN_FILE, {})
@@ -181,6 +234,17 @@ class CredentialsUpdate(BaseModel):
     turno_id: str | None = None
     caja_id: str | None = None
     app: str | None = None
+
+
+class DidiCredentialsUpdate(BaseModel):
+    email: str | None = None
+    password: str | None = None
+
+
+class DidiCaptureBody(BaseModel):
+    """Body de POST /didi/capture (extensión del navegador)."""
+    type: str  # "getShops" | "newOrders"
+    data: dict | None = None
 
 
 def _clean_server_error_message(raw: str) -> str:
@@ -514,7 +578,7 @@ def _do_login_form_sync() -> dict:
 
 
 def _do_login_sync() -> dict:
-    """Ejecuta el login con Playwright síncrono (para usarse en un thread y evitar NotImplementedError en Windows)."""
+    """Ejecuta el login con Playwright síncrono (en proceso separado en Windows para evitar NotImplementedError)."""
     _login_status_push("start", "Iniciando login...")
     logger.info("Login: inicio")
     try:
@@ -668,15 +732,812 @@ def _do_login_sync() -> dict:
     }
 
 
+def _do_didi_login_sync() -> dict:
+    """Login a Didi Food por navegador: correo + contraseña en page.didiglobal.com. Guarda cookies en didi_cookies.json."""
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError as e:
+        logger.error("Playwright no instalado: %s", e)
+        return {
+            "_is_error": True,
+            "success": False,
+            "message": "Playwright no instalado. pip install playwright && playwright install chromium",
+            "saved_cookies": 0,
+        }
+
+    cred = get_didi_credentials()
+    email = (cred.get("email") or "").strip()
+    password = (cred.get("password") or "").strip()
+    if not email or not password:
+        return {
+            "_is_error": True,
+            "success": False,
+            "message": "Faltan email o contraseña en didi_credentials.json",
+            "saved_cookies": 0,
+        }
+
+    logger.info("Didi login: inicio (email=%s)", email[:20] + "..." if len(email) > 20 else email)
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            context = browser.new_context(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                ignore_https_errors=True,
+            )
+            existing = get_didi_cookies()
+            if existing:
+                context.add_cookies(existing)
+
+            page = context.new_page()
+            page.goto(DIDI_LOGIN_URL, wait_until="load", timeout=45000)
+            page.wait_for_timeout(4000)  # SPA Vue: esperar nav-tab y formulario inicial
+
+            # Paso 1: La página inicia con "Ingresar con contraseña" (teléfono). Debemos clicar
+            # "Iniciar sesión con el correo electrónico" para que aparezca el formulario email/password.
+            tab_email_texts = ("Iniciar sesión con el correo electrónico", "Sign in with email", "correo electrónico")
+            tab_clicked = False
+            for tab_text in tab_email_texts:
+                try:
+                    tab = page.get_by_text(tab_text, exact=True).first
+                    tab.wait_for(state="visible", timeout=5000)
+                    tab.click()
+                    tab_clicked = True
+                    logger.info("Didi: clic en tab '%s'", tab_text[:40])
+                    break
+                except Exception:
+                    try:
+                        tab = page.locator("li.nav-tab li", has_text=tab_text).first
+                        tab.wait_for(state="visible", timeout=3000)
+                        tab.click()
+                        tab_clicked = True
+                        logger.info("Didi: clic en tab li '%s'", tab_text[:40])
+                        break
+                    except Exception:
+                        continue
+            if not tab_clicked:
+                try:
+                    # Fallback: clic en la tercera pestaña (correo electrónico) por índice
+                    page.locator(".nav-tab li").nth(2).click()
+                    tab_clicked = True
+                    logger.info("Didi: clic en tab por índice 2")
+                except Exception:
+                    pass
+            if not tab_clicked:
+                logger.warning("Didi: no se encontró tab correo electrónico, continuando...")
+            page.wait_for_timeout(2000)  # Esperar a que Vue muestre el formulario email
+
+            # Paso 2: Campos email y password (solo visibles tras clicar la tab correo)
+            email_selectors = [
+                'input[placeholder="Ingresa tu correo electrónico"]',
+                'input[placeholder*="correo"]',
+                'input[placeholder*="Ingresa tu correo"]',
+                'input[placeholder*="email"]',
+                'input[placeholder*="Email"]',
+                ".input-email input[type='text']",
+                ".email-login-form input[type='text']",
+            ]
+            pwd_selectors = [
+                'input[placeholder="Ingresa tu contraseña"]',
+                'input[placeholder*="contraseña"]',
+                'input[placeholder*="password"]',
+                'input[placeholder*="Password"]',
+                ".input-pwd input[type='password']",
+                ".email-login-form input[type='password']",
+            ]
+            email_loc = page.locator(", ".join(email_selectors)).first
+            pwd_loc = page.locator(", ".join(pwd_selectors)).first
+            email_loc.wait_for(state="visible", timeout=15000)
+            email_loc.fill(email)
+            page.wait_for_timeout(400)
+            pwd_loc.fill(password)
+            page.wait_for_timeout(500)
+
+            # Botón "Iniciar sesión" / "Sign in" / "Log in" (es un div con clase button)
+            btn = page.locator("div.button.actived").filter(
+                has=page.locator("text=/Iniciar sesión|Sign in|Log in/i")
+            ).first
+            btn.click()
+
+            # Esperar redirección (Didi puede tardar o usar SPA; no depender de expect_navigation)
+            current_url = page.url
+            for _ in range(30):  # hasta 30 s
+                page.wait_for_timeout(1000)
+                current_url = page.url
+                if "didi-food.com" in current_url or "setCookieV2" in current_url:
+                    logger.info("Didi: redirección detectada a %s", current_url[:60])
+                    break
+                if "page.didiglobal.com" not in current_url:
+                    break  # ya salió del login
+
+            # Navegar a la store para establecer sesión completa en b.didi-food.com
+            # (la cookie "ticket" y el wsgsig se asocian ahí; sin esto, newOrders devuelve session expired)
+            if "didi-food.com" in current_url or "setCookieV2" in current_url:
+                try:
+                    page.goto(DIDI_STORE_URL, wait_until="domcontentloaded", timeout=20000)
+                    page.wait_for_timeout(5000)  # esperar que carguen APIs (newOrders, etc.)
+                except Exception as nav_err:
+                    logger.warning("Didi: navegación a store: %s", nav_err)
+
+            cookies = context.cookies()
+            save_didi_cookies(cookies)
+            browser.close()
+
+            success = "didi-food.com" in current_url or "setCookieV2" in current_url or "didi" in current_url.lower()
+            logger.info("Didi login: url final=%s, cookies=%s", current_url[:80], len(cookies))
+            return {
+                "_is_error": False,
+                "success": success,
+                "message": "Login Didi realizado" if success else "Comprueba si la sesión se abrió correctamente.",
+                "saved_cookies": len(cookies),
+                "final_url": current_url[:200],
+            }
+    except Exception as e:
+        logger.exception("Didi login: %s", e)
+        return {
+            "_is_error": True,
+            "success": False,
+            "message": f"{type(e).__name__}: {e}",
+            "saved_cookies": 0,
+        }
+
+
+def _fetch_didi_new_orders_sync() -> dict:
+    """
+    Obtiene newOrders de Didi usando Playwright con las cookies guardadas.
+    El navegador carga la store, hace la petición real (con wsgsig correcto) y devuelve la respuesta.
+    Evita 'session expired' porque usa la misma sesión que un usuario real.
+    """
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError as e:
+        logger.error("Playwright no instalado: %s", e)
+        return {"_is_error": True, "success": False, "message": str(e), "data": None}
+
+    cookies = get_didi_cookies()
+    if not cookies:
+        return {
+            "_is_error": True,
+            "success": False,
+            "message": "No hay cookies Didi. Ejecuta POST /didi/login primero.",
+            "data": None,
+        }
+
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            context = browser.new_context(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
+                ignore_https_errors=True,
+            )
+            context.add_cookies(cookies)
+
+            page = context.new_page()
+            new_orders_response: list[dict] = []
+
+            def on_response(resp):
+                url = resp.url or ""
+                if "newOrders" in url and resp.request.resource_type == "xhr":
+                    try:
+                        body = resp.json()
+                        new_orders_response.append(body)
+                    except Exception:
+                        pass
+
+            page.on("response", on_response)
+            page.goto(DIDI_STORE_URL, wait_until="domcontentloaded", timeout=30000)
+            page.wait_for_timeout(3000)
+
+            browser.close()
+
+            if new_orders_response:
+                data = new_orders_response[-1]
+                errno = data.get("errno", 0)
+                success = errno == 0
+                return {
+                    "_is_error": False,
+                    "success": success,
+                    "message": data.get("errmsg") if not success else "OK",
+                    "data": data,
+                }
+            return {
+                "_is_error": True,
+                "success": False,
+                "message": "No se capturó respuesta newOrders (¿sesión expirada?)",
+                "data": None,
+            }
+    except Exception as e:
+        logger.exception("Didi newOrders: %s", e)
+        return {"_is_error": True, "success": False, "message": str(e), "data": None}
+
+
+def _fetch_didi_shops_sync() -> dict:
+    """
+    Navega a shop/select, captura la respuesta de b.didi-food.com/auth/getShops
+    y guarda el resultado en sedes_didi.json (shops = sedes).
+    Requiere sesión iniciada (POST /didi/login).
+    """
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError as e:
+        logger.error("Playwright no instalado: %s", e)
+        return {"_is_error": True, "success": False, "message": str(e), "saved_path": None}
+
+    cookies = get_didi_cookies()
+    if not cookies:
+        return {
+            "_is_error": True,
+            "success": False,
+            "message": "No hay cookies Didi. Ejecuta POST /didi/login primero.",
+            "saved_path": None,
+        }
+
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            context = browser.new_context(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
+                ignore_https_errors=True,
+            )
+            context.add_cookies(cookies)
+
+            page = context.new_page()
+            get_shops_response: list[dict] = []
+
+            def on_response(resp):
+                url = resp.url or ""
+                if "getShops" in url and resp.request.resource_type == "xhr":
+                    try:
+                        body = resp.json()
+                        get_shops_response.append(body)
+                    except Exception:
+                        pass
+
+            page.on("response", on_response)
+            page.goto(DIDI_SHOPS_URL, wait_until="domcontentloaded", timeout=30000)
+            page.wait_for_timeout(5000)  # esperar que cargue getShops
+
+            browser.close()
+
+            if get_shops_response:
+                data = get_shops_response[-1]
+                errno = data.get("errno", -1)
+                success = errno == 0
+                if success:
+                    # Filtrar sedes por lista negra (excluir Burger Monster, etc.)
+                    blacklist = get_didi_blacklist()
+                    shops_data = data.get("data", {}) or {}
+                    shops = shops_data.get("shops") or []
+                    if blacklist:
+                        original_count = len(shops)
+                        shops = [s for s in shops if str(s.get("shopId", "")) not in blacklist]
+                        shops_data = {**shops_data, "shops": shops, "total": len(shops)}
+                        data = {**data, "data": shops_data}
+                        logger.info("Didi: excluidas %d sedes por blacklist (Salchimonster: %d)", original_count - len(shops), len(shops))
+                    DIDI_SHOPS_JSON.parent.mkdir(parents=True, exist_ok=True)
+                    _write_json(DIDI_SHOPS_JSON, data)
+                    total = len(shops)
+                    logger.info("Didi sedes guardadas: %d en %s", total, DIDI_SHOPS_JSON.name)
+                return {
+                    "_is_error": False,
+                    "success": success,
+                    "message": data.get("errmsg", "ok") if success else data.get("errmsg", "error"),
+                    "total": data.get("data", {}).get("total", 0),
+                    "saved_path": str(DIDI_SHOPS_JSON) if success else None,
+                    "data": data,
+                }
+            return {
+                "_is_error": True,
+                "success": False,
+                "message": "No se capturó respuesta getShops (¿sesión expirada?)",
+                "saved_path": None,
+            }
+    except Exception as e:
+        logger.exception("Didi getShops: %s", e)
+        return {"_is_error": True, "success": False, "message": str(e), "saved_path": None}
+
+
+def _fetch_didi_daily_orders_by_shop_sync() -> dict:
+    """
+    Estrategia sede a sede: va a shop/select (locales + excepciones blacklist),
+    selecciona cada sede y captura respuestas de b.didi-food.com:
+    - bench/order/history (data.orderList: orderId, displayNum, shopId, ver DIDI_SITE_EXAMPLE.JSON)
+    - bench/order/dailyOrders (data.serving + data.highlight).
+    Fusiona en didi_daily_orders.json y va alimentando didi_system_map.json por sede.
+    Requiere POST /didi/login y sedes en sedes_didi.json (GET /didi/shops).
+    """
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        return {"_is_error": True, "success": False, "message": "Playwright no instalado", "collected": 0}
+
+    raw = _read_json(DIDI_SHOPS_JSON, {})
+    shops_data = (raw.get("data") or {}).get("shops") or []
+    blacklist = get_didi_blacklist()
+    if blacklist:
+        shops_data = [s for s in shops_data if str(s.get("shopId", "")) not in blacklist]
+    if not shops_data:
+        return {
+            "_is_error": True,
+            "success": False,
+            "message": "No hay sedes en sedes_didi.json (ejecuta GET /didi/shops antes).",
+            "collected": 0,
+        }
+
+    cookies = get_didi_cookies()
+    if not cookies:
+        return {"_is_error": True, "success": False, "message": "No hay cookies Didi. POST /didi/login primero.", "collected": 0}
+
+    shop_select_url = f"{DIDI_SHOPS_URL}?needback=1&from=order"
+    index = _get_didi_orders_index()
+    before_count = len(index)
+    today_colombia = _get_today_colombia()
+    map_path = _didi_system_map_path_for_date(today_colombia)
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            context = browser.new_context(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
+                ignore_https_errors=True,
+            )
+            context.add_cookies(cookies)
+            page = context.new_page()
+            daily_responses: list[dict] = []
+            history_responses: list[dict] = []
+
+            def on_response(resp):
+                url = resp.url or ""
+                if "didi-food" not in url:
+                    return
+                try:
+                    body = resp.json()
+                    if not isinstance(body, dict):
+                        return
+                    if "dailyOrders" in url:
+                        daily_responses.append(body)
+                    if "bench/order/history" in url:
+                        history_responses.append(body)
+                except Exception:
+                    pass
+
+            page.on("response", on_response)
+            page.goto(shop_select_url, wait_until="domcontentloaded", timeout=30000)
+            page.wait_for_timeout(5000)
+
+            total_shops = len(shops_data)
+            for i, shop in enumerate(shops_data):
+                shop_id = str(shop.get("shopId", ""))
+                shop_name = (shop.get("shopName") or "").strip()
+                if not shop_name:
+                    continue
+                logger.info("Didi dailyOrders: sede %s/%s %s", i + 1, total_shops, shop_name[:40])
+                daily_responses.clear()
+                history_responses.clear()
+                try:
+                    if i > 0:
+                        page.goto(shop_select_url, wait_until="domcontentloaded", timeout=12000)
+                        page.wait_for_timeout(1500)
+                    # Cerrar modal flotante que tapa la lista de sedes (el-floating is-fullscreen)
+                    try:
+                        page.keyboard.press("Escape")
+                        page.wait_for_timeout(300)
+                        page.keyboard.press("Escape")
+                        page.wait_for_timeout(500)
+                        close_btn = page.locator(".el-floating .el-dialog__headerbtn, .el-dialog__headerbtn").first
+                        if close_btn.count() > 0:
+                            close_btn.click(timeout=2000)
+                            page.wait_for_timeout(400)
+                    except Exception:
+                        pass
+                    loc = page.locator(f"text={shop_name}").first
+                    if loc.count() == 0:
+                        loc = page.get_by_text(shop_name, exact=False).first
+                    if loc.count() == 0:
+                        logger.warning("Didi dailyOrders: no se encontró sede %s, saltando", shop_name[:40])
+                        continue
+                    loc.scroll_into_view_if_needed()
+                    page.wait_for_timeout(400)
+                    loc.click(timeout=15000)
+                    page.wait_for_timeout(1500)
+                    page.goto(DIDI_STORE_ORDER_HISTORY_URL, wait_until="domcontentloaded", timeout=12000)
+                    page.wait_for_timeout(2500)
+                    try:
+                        page.wait_for_response(
+                            lambda r: "bench/order/history" in (r.url or "") or "dailyOrders" in (r.url or ""),
+                            timeout=10000,
+                        )
+                    except Exception:
+                        pass
+                    page.wait_for_timeout(1500)
+                except Exception as e:
+                    logger.warning("Didi dailyOrders: sede %s (%s): %s, siguiendo con la siguiente", shop_name[:30], i + 1, e)
+                    continue
+
+                for body in daily_responses:
+                    data = body.get("data") or {}
+                    for order in (data.get("serving") or []) + (data.get("highlight") or []):
+                        if not isinstance(order, dict):
+                            continue
+                        oid = str(order.get("orderId") or "").strip()
+                        if not oid:
+                            continue
+                        display = (order.get("displayNum") or "").strip()
+                        index[oid] = {"orderId": oid, "displayNum": display or oid, "shopId": order.get("shopId")}
+                for body in history_responses:
+                    data = body.get("data") or {}
+                    for order in data.get("orderList") or []:
+                        if not isinstance(order, dict):
+                            continue
+                        oid = str(order.get("orderId") or "").strip()
+                        if not oid:
+                            continue
+                        display = (order.get("displayNum") or "").strip()
+                        index[oid] = {"orderId": oid, "displayNum": display or oid, "shopId": order.get("shopId")}
+                # Guardar órdenes y alimentar el mapa tras cada sede
+                if True:
+                    DIDI_DAILY_ORDERS_JSON.parent.mkdir(parents=True, exist_ok=True)
+                    _write_json(DIDI_DAILY_ORDERS_JSON, index)
+                    order_id_to_display_inc: dict[str, str] = {}
+                    for oid, obj in index.items():
+                        if not oid:
+                            continue
+                        display = (obj.get("displayNum") or "").strip()
+                        if display:
+                            order_id_to_display_inc[oid] = display
+                    if order_id_to_display_inc:
+                        existing_map = _read_json(map_path, {})
+                        if isinstance(existing_map, dict):
+                            order_id_to_display_inc = {**existing_map, **order_id_to_display_inc}
+                        map_path.parent.mkdir(parents=True, exist_ok=True)
+                        _write_json(map_path, order_id_to_display_inc)
+                    logger.info("Didi dailyOrders: sede %s guardada (%d órdenes total), mapa %d entradas", shop_name[:35], len(index), len(order_id_to_display_inc))
+                # Esperar 1 minuto antes de cambiar de sede
+                if i < total_shops - 1:
+                    page.wait_for_timeout(60000)
+
+            browser.close()
+    except Exception as e:
+        logger.exception("Didi dailyOrders por sede: %s", e)
+        return {"_is_error": True, "success": False, "message": str(e), "collected": 0}
+
+    DIDI_DAILY_ORDERS_JSON.parent.mkdir(parents=True, exist_ok=True)
+    _write_json(DIDI_DAILY_ORDERS_JSON, index)
+
+    # Actualizar el mapa orderId -> displayText (didi_system_map_YYYY-MM-DD.json) para usar en deliverys
+    order_id_to_display: dict[str, str] = {}
+    for oid, obj in index.items():
+        if not oid:
+            continue
+        display = (obj.get("displayNum") or "").strip()
+        if display:
+            order_id_to_display[oid] = display
+    applied_to_deliverys = 0
+    if order_id_to_display:
+        existing = _read_json(map_path, {})
+        if isinstance(existing, dict):
+            order_id_to_display = {**existing, **order_id_to_display}
+        map_path.parent.mkdir(parents=True, exist_ok=True)
+        _write_json(map_path, order_id_to_display)
+        logger.info("Didi dailyOrders: mapa actualizado %s (%d orderId -> displayNum)", map_path.name, len(order_id_to_display))
+        applied_to_deliverys = _apply_didi_display_to_deliverys(today_colombia, order_id_to_display)
+        if applied_to_deliverys:
+            logger.info("Didi dailyOrders: aplicado a deliverys %s reemplazos", applied_to_deliverys)
+
+    collected = len(index) - before_count
+    logger.info("Didi dailyOrders: guardado %s (%d órdenes, +%d esta pasada)", DIDI_DAILY_ORDERS_JSON.name, len(index), collected)
+    return {"_is_error": False, "success": True, "collected": collected, "total": len(index), "shops_visited": len(shops_data), "map_updated": len(order_id_to_display), "applied_to_deliverys": applied_to_deliverys}
+
+
+def _fetch_didi_order_list_sync() -> dict[str, str]:
+    """
+    Genera didi_system_map.json consultando el endpoint de historial de órdenes.
+    - Navega a https://didi-food.com/es-CO/manager/order con cookies de inicio de sesión.
+    - Captura en la red las respuestas POST a order/border/historyList (forma en didi/headers.txt).
+    - La respuesta tiene la forma de didi/orders_didi_query.json (data.orderList con orderId y orderIndex.displayText).
+    - Arma didi/didi_system_map.json: { orderId -> displayText } (ej. "5764659591531007003" -> "#357002").
+    Requiere sesión iniciada (POST /didi/login). Por ahora solo se genera con la(s) respuesta(s) del endpoint.
+    """
+    import re
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        return {}
+
+    cookies = get_didi_cookies()
+    if not cookies:
+        return {}
+
+    order_id_to_display: dict[str, str] = {}
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            context = browser.new_context(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
+                ignore_https_errors=True,
+            )
+            context.add_cookies(cookies)
+            page = context.new_page()
+            order_list_responses: list[dict] = []
+            seen_urls: list[str] = []
+            order_list_endpoint_seen: list[str] = []  # URLs que devolvieron data.orderList (aunque vacía)
+            all_didi_urls: list[str] = []  # Cualquier respuesta a didi-food (para diagnóstico si no llega historyList)
+
+            def on_response_log(resp):
+                url = resp.url or ""
+                if "didi-food" not in url:
+                    return
+                all_didi_urls.append(url[:220])
+                if "historyList" not in url:
+                    return
+                seen_urls.append(url[:200])
+                try:
+                    body = resp.json()
+                    if not isinstance(body, dict):
+                        return
+                    data = body.get("data")
+                    if not isinstance(data, dict):
+                        return
+                    order_list = data.get("orderList")
+                    # Forma de didi/orders_didi_query.json: data.total, data.totalPage, data.orderList[]
+                    if isinstance(order_list, list):
+                        order_list_endpoint_seen.append(url[:200])
+                        total = data.get("total") or 0
+                        if len(order_list) > 0 and total > 0:
+                            order_list_responses.append(body)
+                            logger.info("Didi order list: capturada respuesta historyList con %s órdenes desde %s", len(order_list), url[:120])
+                        else:
+                            logger.info("Didi order list: historyList con orderList vacía o total=0 desde %s total=%s len=%s", url[:120], total, len(order_list))
+                except Exception as e:
+                    logger.debug("Didi order list: respuesta no JSON o sin orderList - %s", e)
+
+            page.on("response", on_response_log)
+            # Ir solo con cookies a manager/order (sin clics)
+            page.goto(DIDI_MANAGER_ORDER_URL, wait_until="domcontentloaded", timeout=30000)
+            page.wait_for_timeout(5000)
+            current = (page.url or "").lower()
+            # Si la SPA redirigió a overview, forzar la ruta manager/order vía History API para que dispare historyList
+            if "manager/order" not in current or "overview" in current:
+                try:
+                    page.evaluate(
+                        "() => { history.pushState({}, '', '/es-CO/manager/order'); window.dispatchEvent(new PopStateEvent('popstate', { state: {} })); }"
+                    )
+                    page.wait_for_timeout(6000)
+                    logger.info("Didi order list: forzada ruta /es-CO/manager/order (estaba en %s)", current[:50])
+                except Exception as e:
+                    logger.debug("Didi order list: pushState: %s", e)
+            # Esperar vista de pedidos (no aplicar filtro de fecha para no quedar en 0 órdenes; la página usa su rango por defecto)
+            try:
+                page.wait_for_selector(".order-page, .order-filter, .pb-pagination", timeout=30000)
+            except Exception:
+                pass
+            page.wait_for_timeout(5000)
+            try:
+                page.wait_for_response(
+                    lambda r: "didi-food" in (r.url or "") and "historyList" in (r.url or ""),
+                    timeout=60000,
+                )
+            except Exception:
+                pass
+            page.wait_for_timeout(5000)
+
+            total_page = 1
+            if order_list_responses:
+                data0 = order_list_responses[0].get("data") or {}
+                total_page = data0.get("totalPage") or 1
+            total_page = max(1, int(total_page) if isinstance(total_page, (int, float)) else 1)
+            logger.info("Didi order list: totalPage=%s, obteniendo todas las páginas", total_page)
+
+            # Traer todas las páginas: clic en "siguiente" hasta total_page
+            for page_num in range(2, total_page + 1):
+                prev_count = len(order_list_responses)
+                next_btn = page.locator("div.pb-pagination button.btn-next")
+                if next_btn.count() == 0:
+                    logger.info("Didi order list: no hay botón siguiente (pág %s/%s)", page_num, total_page)
+                    break
+                if next_btn.is_disabled():
+                    logger.info("Didi order list: botón siguiente deshabilitado (pág %s/%s)", page_num, total_page)
+                    break
+                try:
+                    next_btn.scroll_into_view_if_needed()
+                    page.wait_for_timeout(500)
+                    next_btn.click()
+                except Exception as e:
+                    logger.debug("Didi pagination: clic en siguiente (pág %s) falló: %s", page_num, e)
+                    break
+                try:
+                    page.wait_for_response(
+                        lambda r: "didi-food" in (r.url or "") and "historyList" in (r.url or ""),
+                        timeout=40000,
+                    )
+                except Exception:
+                    pass
+                page.wait_for_timeout(5000)
+                if len(order_list_responses) <= prev_count:
+                    page.wait_for_timeout(3000)
+                if len(order_list_responses) <= prev_count:
+                    logger.info("Didi order list: página %s/%s no añadió respuestas nuevas", page_num, total_page)
+                else:
+                    logger.info("Didi order list: página %s/%s capturada (%s respuestas)", page_num, total_page, len(order_list_responses))
+
+            if not order_list_responses and order_list_endpoint_seen:
+                logger.warning("Didi order list: el endpoint devolvió orderList vacía. URLs con orderList: %s", order_list_endpoint_seen[:5])
+            elif not order_list_responses and seen_urls:
+                logger.warning("Didi order list: no se capturó ninguna respuesta con forma orderList. URLs historyList vistas: %s", seen_urls[:25])
+            elif not order_list_responses and all_didi_urls:
+                logger.warning(
+                    "Didi order list: hubo respuestas didi-food pero ninguna historyList (¿redirigió a login?). URLs vistas: %s",
+                    all_didi_urls[:20],
+                )
+            elif not order_list_responses:
+                logger.warning(
+                    "Didi order list: no se recibió ninguna respuesta de didi-food (¿sesión expirada? Haz POST /didi/login de nuevo)."
+                )
+
+            # Armar mapa orderId -> displayText solo para Salchimonster (excluir blacklist = Burger Monster etc.)
+            blacklist = get_didi_blacklist()
+            orders_list: list[dict] = []
+            for resp_data in order_list_responses:
+                data = resp_data.get("data") or {}
+                for o in data.get("orderList") or []:
+                    if not isinstance(o, dict):
+                        continue
+                    shop_id = str((o.get("shopInfo") or {}).get("shopId") or "")
+                    if blacklist and shop_id in blacklist:
+                        continue
+                    oid = (o.get("orderId") or "").strip()
+                    order_index = o.get("orderIndex")
+                    if isinstance(order_index, dict):
+                        display = (order_index.get("displayText") or "").strip()
+                    else:
+                        display = ""
+                    if oid and display and oid not in order_id_to_display:
+                        order_id_to_display[oid] = display
+                        orders_list.append({"orderId": oid, "displayText": display})
+
+            if blacklist:
+                logger.info("Didi order list: filtro Salchimonster aplicado (excluir %d shopIds de blacklist)", len(blacklist))
+
+            final_url = page.url or ""
+            # Siempre guardar order_list.json con diagnóstico para saber si se llegó al endpoint
+            DIDI_ORDER_LIST_JSON.parent.mkdir(parents=True, exist_ok=True)
+            diagnostic = {
+                "reached_url": final_url,
+                "cookies_used": len(cookies),
+                "historyList_responses_count": len(seen_urls),
+                "all_didi_urls_count": len(all_didi_urls),
+                "urls_seen_sample": seen_urls[:15],
+                "order_list_endpoint_seen_sample": order_list_endpoint_seen[:5],
+                "all_didi_urls_sample": all_didi_urls[:25],
+            }
+            payload = {
+                "fetched_at": _now().isoformat(),
+                "count": len(order_id_to_display),
+                "order_id_to_display": order_id_to_display,
+                "orders": orders_list,
+                "pages_captured": len(order_list_responses),
+                "diagnostic": diagnostic,
+            }
+
+            # Si no trajo nada en vivo, usar didi/orders_didi_query.json como respaldo (también filtrado Salchimonster)
+            if not order_id_to_display:
+                fallback_path = DIDI_SYSTEM_MAP_JSON.parent / "orders_didi_query.json"
+                if fallback_path.exists():
+                    try:
+                        fallback_data = json.loads(fallback_path.read_text(encoding="utf-8"))
+                        data_fb = (fallback_data or {}).get("data") or {}
+                        for o in data_fb.get("orderList") or []:
+                            if not isinstance(o, dict):
+                                continue
+                            shop_id_fb = str((o.get("shopInfo") or {}).get("shopId") or "")
+                            if blacklist and shop_id_fb in blacklist:
+                                continue
+                            oid = (o.get("orderId") or "").strip()
+                            order_index = o.get("orderIndex")
+                            if isinstance(order_index, dict):
+                                display = (order_index.get("displayText") or "").strip()
+                            else:
+                                display = ""
+                            if oid and display:
+                                order_id_to_display[oid] = display
+                        if order_id_to_display:
+                            _map_path = _didi_system_map_path_for_date(_get_today_colombia())
+                            _map_path.parent.mkdir(parents=True, exist_ok=True)
+                            _write_json(_map_path, order_id_to_display)
+                            payload["from_fallback_file"] = True
+                            payload["count"] = len(order_id_to_display)
+                            payload["order_id_to_display"] = order_id_to_display
+                            payload["orders"] = [{"orderId": k, "displayText": v} for k, v in order_id_to_display.items()]
+                            logger.info("Didi order list: 0 en vivo; usado respaldo orders_didi_query.json -> %s órdenes", len(order_id_to_display))
+                    except Exception as e:
+                        logger.warning("Didi order list: fallback orders_didi_query.json falló: %s", e)
+
+            # Poblar didi_system_map_YYYY-MM-DD.json siempre que haya órdenes (de live o fallback)
+            if order_id_to_display:
+                _map_path = _didi_system_map_path_for_date(_get_today_colombia())
+                _map_path.parent.mkdir(parents=True, exist_ok=True)
+                _write_json(_map_path, order_id_to_display)
+                logger.info(
+                    "Didi order list: guardado %s en %s y %s (%s órdenes, %s páginas)",
+                    "respaldo" if payload.get("from_fallback_file") else "live",
+                    _map_path.name,
+                    DIDI_ORDER_LIST_JSON.name,
+                    len(order_id_to_display),
+                    len(order_list_responses),
+                )
+
+            _write_json(DIDI_ORDER_LIST_JSON, payload)
+            browser.close()
+    except Exception as e:
+        logger.warning("Didi order list: %s", e)
+    return order_id_to_display
+
+
+def _is_didi_channel(row: dict) -> bool:
+    """True si la fila es del canal Didi Food (canaldelivery_id 505)."""
+    cid = (row.get("canaldelivery_id") or "").strip()
+    if cid == "505":
+        return True
+    canal = row.get("canaldelivery")
+    if isinstance(canal, dict):
+        if str(canal.get("canaldelivery_id") or "").strip() == "505":
+            return True
+        if (canal.get("canaldelivery_descripcion") or "").strip() == "Didi Food":
+            return True
+    return (row.get("canaldelivery_descripcion") or "").strip() == "Didi Food"
+
+
+def _apply_didi_display_to_deliverys(date_str: str, order_id_to_display: dict[str, str]) -> int:
+    """
+    En deliverys/{local_id}/{date_str}.json reemplaza delivery_codigolimadelivery
+    (ID largo Didi) por el displayText (ej. #357002) solo en órdenes del canal Didi Food
+    (canaldelivery_id 505), haciendo el cruce con el mapa orderId -> displayNum.
+    Devuelve número de reemplazos hechos.
+    """
+    if not order_id_to_display or not DELIVERYS_CACHE_DIR.exists():
+        return 0
+    total_replaced = 0
+    for local_dir in DELIVERYS_CACHE_DIR.iterdir():
+        if not local_dir.is_dir():
+            continue
+        filepath = local_dir / f"{date_str}.json"
+        if not filepath.exists():
+            continue
+        cached = _read_json(filepath, {})
+        data = cached.get("data")
+        if not isinstance(data, list):
+            continue
+        changed = False
+        file_replaced = 0
+        for row in data:
+            if not _is_didi_channel(row):
+                continue
+            cod = (row.get("delivery_codigolimadelivery") or "").strip()
+            if cod and cod in order_id_to_display:
+                row["delivery_codigolimadelivery"] = order_id_to_display[cod]
+                changed = True
+                file_replaced += 1
+                total_replaced += 1
+        if changed:
+            cached["data"] = data
+            _write_json(filepath, cached)
+            logger.info("Didi display: actualizado %s (%s reemplazos)", filepath.name, file_replaced)
+    return total_replaced
+
+
 _LOGIN_REFRESH_INTERVAL_SECONDS = 12 * 3600  # 12 horas: hacer login de nuevo para renovar sesión
+_DIDI_ORDER_LIST_INTERVAL_SECONDS = 3 * 60  # 3 minutos: consultar órdenes Didi y actualizar deliverys
+_DIDI_DAILY_ORDERS_INTERVAL_SECONDS = 5 * 60  # 5 minutos: captura sede a sede y aplica reemplazos (solo en horario de apertura)
 
 _login_executor: Any = None
 
 def _get_executor():
+    """En Windows usa ProcessPoolExecutor para evitar NotImplementedError de Playwright con subprocesos en threads."""
     global _login_executor
     if _login_executor is None:
         import concurrent.futures
-        _login_executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+        if sys.platform == "win32":
+            _login_executor = concurrent.futures.ProcessPoolExecutor(max_workers=2)
+        else:
+            _login_executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
     return _login_executor
 
 
@@ -695,6 +1556,99 @@ async def _login_refresh_loop() -> None:
                 logger.info("Login refresh: OK, token renovado")
         except Exception as e:
             logger.warning("Login refresh: excepción - %s", e)
+
+
+async def _refresh_deliverys_for_today() -> bool:
+    """Actualiza pedidos del día (deliverys) para todos los locales desde la API. Devuelve True si se refrescó algo."""
+    import httpx
+    locales_data = _locales_list_for_iteration()
+    local_ids = []
+    for item in locales_data:
+        lid = _locale_id(item) if isinstance(item, dict) else ""
+        if lid:
+            local_ids.append(lid)
+    if not local_ids:
+        return False
+    token = get_token()
+    cookies_dict = {c["name"]: c["value"] for c in get_cookies() if isinstance(c.get("name"), str) and isinstance(c.get("value"), str)}
+    if not token:
+        return False
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            fecha_hoy = _get_today_colombia()
+            for i, local_id in enumerate(local_ids):
+                data = await _fetch_deliverys_for_local(client, local_id, cookies_dict, token)
+                _save_deliverys_for_local(local_id, data)
+                if i < len(local_ids) - 1:
+                    await asyncio.sleep(_DELIVERYS_DELAY_BETWEEN_LOCALS)
+        _update_canales_from_deliverys_cache()
+        return True
+    except Exception as e:
+        logger.warning("Didi: refresh deliverys antes de reemplazo - %s", e)
+        return False
+
+
+async def _run_didi_daily_orders_once() -> None:
+    """Ejecuta una vez al arranque: actualiza deliverys del día, captura Didi y aplica reemplazos (solo si estamos en horario de apertura)."""
+    if not _is_within_opening_hours():
+        logger.debug("Didi daily-orders (arranque): fuera de horario, se omite")
+        return
+    try:
+        await _refresh_deliverys_for_today()
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(_get_executor(), _fetch_didi_daily_orders_by_shop_sync)
+        if result.get("_is_error"):
+            logger.warning("Didi daily-orders (arranque): %s", result.get("message", "error"))
+        else:
+            n = result.get("applied_to_deliverys", 0)
+            logger.info("Didi daily-orders (arranque): %s órdenes en mapa, %s reemplazos", result.get("map_updated", 0), n)
+    except Exception as e:
+        logger.warning("Didi daily-orders (arranque): %s", e)
+
+
+async def _didi_daily_orders_scheduler_loop() -> None:
+    """Cada 5 minutos actualiza deliverys del día, ejecuta captura Didi (sede a sede) y aplica reemplazos; solo en horario de apertura."""
+    import asyncio
+    await asyncio.sleep(90)  # espera inicial para no chocar con arranque
+    while True:
+        await asyncio.sleep(_DIDI_DAILY_ORDERS_INTERVAL_SECONDS)
+        if not _is_within_opening_hours():
+            logger.debug("Didi daily-orders: fuera de horario de apertura, se omite")
+            continue
+        try:
+            await _refresh_deliverys_for_today()
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(_get_executor(), _fetch_didi_daily_orders_by_shop_sync)
+            if result.get("_is_error"):
+                logger.warning("Didi daily-orders: %s", result.get("message", "error"))
+            else:
+                n = result.get("applied_to_deliverys", 0)
+                if n:
+                    logger.info("Didi daily-orders: %s órdenes en mapa, %s reemplazos en deliverys", result.get("map_updated", 0), n)
+                else:
+                    logger.info("Didi daily-orders: %s órdenes en mapa", result.get("map_updated", 0))
+        except Exception as e:
+            logger.warning("Didi daily-orders scheduler: %s", e)
+
+
+async def _didi_order_list_scheduler_loop() -> None:
+    """Cada 3 minutos consulta la lista de órdenes en Didi (manager/order) y actualiza delivery_codigolimadelivery en deliverys con displayText."""
+    import asyncio
+    await asyncio.sleep(60)  # espera inicial 1 min para no chocar con arranque
+    while True:
+        await asyncio.sleep(_DIDI_ORDER_LIST_INTERVAL_SECONDS)
+        try:
+            loop = asyncio.get_event_loop()
+            order_id_to_display = await loop.run_in_executor(_get_executor(), _fetch_didi_order_list_sync)
+            if order_id_to_display:
+                today = _now().strftime("%Y-%m-%d")
+                n = _apply_didi_display_to_deliverys(today, order_id_to_display)
+                if n:
+                    logger.info("Didi order list: %s órdenes mapeadas, %s reemplazos en deliverys", len(order_id_to_display), n)
+            else:
+                logger.debug("Didi order list: sin datos (¿sesión expirada?)")
+        except Exception as e:
+            logger.warning("Didi order list scheduler: %s", e)
 
 
 @app.post("/login")
@@ -726,6 +1680,204 @@ async def login_with_chromium(method: str = "api"):
         return JSONResponse(status_code=code, content=content)
     logger.info("POST /login OK")
     return {k: v for k, v in result.items() if k != "_is_error"}
+
+
+@app.get("/didi/credentials")
+def read_didi_credentials():
+    """Devuelve las credenciales Didi guardadas (clave enmascarada)."""
+    cred = get_didi_credentials()
+    out = cred.copy()
+    if out.get("password"):
+        out["password"] = "********"
+    return out
+
+
+@app.put("/didi/credentials")
+def update_didi_credentials(update: DidiCredentialsUpdate):
+    """Actualiza email y/o contraseña de Didi en didi_credentials.json."""
+    current = get_didi_credentials()
+    if update.email is not None:
+        current["email"] = update.email
+    if update.password is not None:
+        current["password"] = update.password
+    save_didi_credentials(current)
+    out = current.copy()
+    if out.get("password"):
+        out["password"] = "********"
+    return {"message": "Credenciales Didi actualizadas", "credentials": out}
+
+
+@app.post("/didi/login")
+async def didi_login():
+    """
+    Inicia sesión en Didi Food con el navegador (Playwright): correo + contraseña.
+    Usa las credenciales de didi_credentials.json (por defecto admon.salchimonster@gmail.com / Didi2024).
+    Guarda las cookies en didi_cookies.json para usarlas en otro proceso.
+    """
+    import asyncio
+    logger.info("POST /didi/login recibido")
+    try:
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(_get_executor(), _do_didi_login_sync)
+    except Exception as e:
+        logger.exception("POST /didi/login excepción: %s", e)
+        raise
+
+    if result.get("_is_error"):
+        return JSONResponse(
+            status_code=result.get("status_code", 500),
+            content={k: v for k, v in result.items() if k not in ("_is_error", "status_code")},
+        )
+    return {k: v for k, v in result.items() if k != "_is_error"}
+
+
+@app.get("/didi/newOrders")
+async def didi_new_orders():
+    """
+    Obtiene las órdenes nuevas de Didi Food usando Playwright con las cookies guardadas.
+    Usa el navegador real para evitar 'session expired' (wsgsig y cookies correctas).
+    Requiere haber hecho POST /didi/login antes.
+    """
+    import asyncio
+    logger.info("GET /didi/newOrders recibido")
+    try:
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(_get_executor(), _fetch_didi_new_orders_sync)
+    except Exception as e:
+        logger.exception("GET /didi/newOrders excepción: %s", e)
+        raise
+
+    if result.get("_is_error"):
+        return JSONResponse(status_code=500, content=result)
+    return result
+
+
+@app.get("/didi/shops")
+async def didi_shops():
+    """
+    Captura las sedes Didi (getShops) con sesión iniciada, navega a shop/select
+    y guarda el resultado en sedes_didi.json.
+    Requiere POST /didi/login antes.
+    """
+    import asyncio
+    logger.info("GET /didi/shops recibido")
+    try:
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(_get_executor(), _fetch_didi_shops_sync)
+    except Exception as e:
+        logger.exception("GET /didi/shops excepción: %s", e)
+        raise
+
+    if result.get("_is_error"):
+        return JSONResponse(status_code=500, content=result)
+    return result
+
+
+def _get_didi_orders_index() -> dict:
+    """Carga el índice de órdenes (formato: {orderId: {orderId, displayNum}}). Migra formato antiguo si existe."""
+    raw = _read_json(DIDI_DAILY_ORDERS_JSON, {})
+    if not isinstance(raw, dict):
+        return {}
+    if "orders" in raw:
+        return {str(o.get("orderId", "")): o for o in (raw.get("orders") or []) if isinstance(o, dict) and o.get("orderId")}
+    return raw
+
+
+@app.get("/didi/daily-orders")
+def list_didi_daily_orders():
+    """Lista todas las órdenes Didi acumuladas (índice por orderId, O(1) acceso)."""
+    index = _get_didi_orders_index()
+    return {"count": len(index), "orders": list(index.values())}
+
+
+@app.get("/didi/daily-orders-capture")
+async def didi_daily_orders_capture():
+    """
+    Estrategia sede a sede: va a shop/select?needback=1&from=order,
+    selecciona cada sede de sedes_didi.json (Salchimonster, sin blacklist),
+    captura b.didi-food.com/bench/order/dailyOrders de cada una y fusiona en didi_daily_orders.json.
+    Requiere POST /didi/login y sedes en sedes_didi.json (GET /didi/shops).
+    """
+    import asyncio
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(_get_executor(), _fetch_didi_daily_orders_by_shop_sync)
+    if result.get("_is_error"):
+        return JSONResponse(status_code=500, content=result)
+    return result
+
+
+@app.get("/didi/daily-orders/{order_id}")
+def get_didi_order(order_id: str):
+    """Acceso O(1) a una orden por orderId."""
+    index = _get_didi_orders_index()
+    order = index.get(order_id)
+    if not order:
+        raise HTTPException(status_code=404, detail=f"Orden {order_id} no encontrada")
+    return order
+
+
+@app.get("/didi/order-list")
+def didi_order_list(apply_to_deliverys: bool = False):
+    """
+    Devuelve el mapa orderId -> displayText desde didi_system_map_YYYY-MM-DD.json (hoy Colombia, actualizado por GET /didi/daily-orders-capture).
+    Si apply_to_deliverys=true, actualiza delivery_codigolimadelivery en los JSON de deliverys de hoy.
+    No usa manager/order; solo lectura del archivo generado por la captura sede a sede.
+    """
+    today_colombia = _get_today_colombia()
+    map_path = _didi_system_map_path_for_date(today_colombia)
+    order_id_to_display = _read_json(map_path, {})
+    if not isinstance(order_id_to_display, dict):
+        order_id_to_display = {}
+    out = {"count": len(order_id_to_display), "order_id_to_display": order_id_to_display, "map_file": map_path.name}
+    if apply_to_deliverys and order_id_to_display:
+        n = _apply_didi_display_to_deliverys(today_colombia, order_id_to_display)
+        out["applied_to_deliverys"] = n
+    return out
+
+
+@app.post("/didi/capture")
+def didi_capture(body: DidiCaptureBody):
+    """
+    Recibe datos capturados por la extensión Didi Capture (getShops, newOrders).
+    Guarda getShops en sedes_didi.json (con blacklist) y newOrders en didi_new_orders.json.
+    """
+    if not body.type or not body.data:
+        return JSONResponse(status_code=400, content={"error": "Faltan type o data"})
+    t = body.type.lower()
+    data = body.data
+
+    try:
+        if t == "getshops":
+            blacklist = get_didi_blacklist()
+            shops_data = data.get("data", {}) or {}
+            shops = shops_data.get("shops") or []
+            if blacklist:
+                shops = [s for s in shops if str(s.get("shopId", "")) not in blacklist]
+                logger.info("Didi capture: getShops filtrado por blacklist, %d sedes Salchimonster", len(shops))
+            out = {**data, "data": {**shops_data, "shops": shops, "total": len(shops)}}
+            _write_json(DIDI_SHOPS_JSON, out)
+            logger.info("Didi capture: sedes guardadas en %s (%d)", DIDI_SHOPS_JSON.name, len(shops))
+        elif t == "neworders":
+            _write_json(DIDI_NEW_ORDERS_JSON, data)
+            logger.info("Didi capture: newOrders guardado en %s", DIDI_NEW_ORDERS_JSON.name)
+        elif t == "dailyorders":
+            serving = (data.get("data") or {}).get("serving") or []
+            new_items = [(str(o.get("orderId", "")), {"orderId": o.get("orderId"), "displayNum": o.get("displayNum")}) for o in serving if isinstance(o, dict) and o.get("orderId")]
+            if not new_items:
+                return {"ok": True, "type": body.type}
+            index = _get_didi_orders_index()
+            for oid, order in new_items:
+                if oid:
+                    index[oid] = order
+            _write_json(DIDI_DAILY_ORDERS_JSON, index)
+            logger.info("Didi capture: dailyOrders fusionados en %s (+%d, total %d)", DIDI_DAILY_ORDERS_JSON.name, len(new_items), len(index))
+        else:
+            return JSONResponse(status_code=400, content={"error": f"Tipo desconocido: {body.type}"})
+
+        return {"ok": True, "type": body.type}
+    except Exception as e:
+        logger.exception("Didi capture: %s", e)
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
 
 @app.get("/cookies")
@@ -951,6 +2103,11 @@ def _now() -> datetime:
 def _get_today_colombia() -> str:
     """Fecha de hoy en Colombia (solo año-mes-día, sin hora)."""
     return _now().strftime("%Y-%m-%d")
+
+
+def _didi_system_map_path_for_date(date_str: str) -> Path:
+    """Ruta del mapa Didi por día: didi/didi_system_map_YYYY-MM-DD.json (evita crecimiento indefinido)."""
+    return DIDI_SYSTEM_MAP_JSON.parent / f"didi_system_map_{date_str}.json"
 
 
 def _parse_hhmm(s: str) -> tuple[int, int]:

@@ -1,0 +1,385 @@
+{
+  "errno": 0,
+  "errmsg": "ok",
+  "requestId": "0a9ed2296993d8b5649f762f47aa1a02",
+  "time": 1771296949,
+  "msectime": 1771296949648,
+  "data": {
+    "contractorId": "5764607535924120886",
+    "total": 12,
+    "shops": [
+      {
+        "shopName": "Salchimonster (Bochalema)",
+        "shopId": "5764607550243472412",
+        "contractorId": "5764607535924120886",
+        "isMain": 0,
+        "cityId": "57330100",
+        "countryCode": "CO",
+        "currency": "COP",
+        "timezone": "America/Bogota",
+        "isApiConfirm": false,
+        "logo": "https://img0.didiglobal.com/static/soda_public/do1_DiQhIx9QNPlY6mDnHWjx",
+        "timeOffsetInfo": {
+          "timestamp": 1771296949,
+          "offset": -18000
+        },
+        "showBizStatus": 1,
+        "brandId": "5764608546395325775",
+        "shopOnlineStatus": 1,
+        "countyGroupId": "573301000001",
+        "countyId": "57330105",
+        "shopIsBanned": 0,
+        "channel": 0,
+        "pickingMode": 0,
+        "businessType": 1,
+        "businessChannel": [
+          1
+        ],
+        "status": 0,
+        "url": "",
+        "role": 1
+      },
+      {
+        "shopName": "Salchimonster (Cedritos)",
+        "shopId": "5764607936383684597",
+        "contractorId": "5764607535924120886",
+        "isMain": 0,
+        "cityId": "57380100",
+        "countryCode": "CO",
+        "currency": "COP",
+        "timezone": "America/Bogota",
+        "isApiConfirm": false,
+        "logo": "https://img0.didiglobal.com/static/soda_public/do1_IZqrndgqbub8KfmT21Pm",
+        "timeOffsetInfo": {
+          "timestamp": 1771296949,
+          "offset": -18000
+        },
+        "showBizStatus": 1,
+        "brandId": "5764608546395325775",
+        "shopOnlineStatus": 1,
+        "countyGroupId": "573801000001",
+        "countyId": "57380119",
+        "shopIsBanned": 0,
+        "channel": 0,
+        "pickingMode": 0,
+        "businessType": 1,
+        "businessChannel": [
+          1
+        ],
+        "status": 0,
+        "url": "",
+        "role": 1
+      },
+      {
+        "shopName": "Salchimonster (City U)",
+        "shopId": "5764607903257069379",
+        "contractorId": "5764607535924120886",
+        "isMain": 0,
+        "cityId": "57380100",
+        "countryCode": "CO",
+        "currency": "COP",
+        "timezone": "America/Bogota",
+        "isApiConfirm": false,
+        "logo": "https://img0.didiglobal.com/static/soda_public/do1_Jmj7MW3FSNwcGJfhGyrY",
+        "timeOffsetInfo": {
+          "timestamp": 1771296949,
+          "offset": -18000
+        },
+        "showBizStatus": 1,
+        "brandId": "5764608546395325775",
+        "shopOnlineStatus": 1,
+        "countyGroupId": "573801000001",
+        "countyId": "57380114",
+        "shopIsBanned": 0,
+        "channel": 0,
+        "pickingMode": 0,
+        "businessType": 1,
+        "businessChannel": [
+          1
+        ],
+        "status": 0,
+        "url": "",
+        "role": 1
+      },
+      {
+        "shopName": "Salchimonster (Ciudad Montes)",
+        "shopId": "5764607627779378477",
+        "contractorId": "5764607535924120886",
+        "isMain": 0,
+        "cityId": "57380100",
+        "countryCode": "CO",
+        "currency": "COP",
+        "timezone": "America/Bogota",
+        "isApiConfirm": false,
+        "logo": "https://img0.didiglobal.com/static/soda_public/do1_lEuCSm6q3GpcYKYZ2MHT",
+        "timeOffsetInfo": {
+          "timestamp": 1771296949,
+          "offset": -18000
+        },
+        "showBizStatus": 1,
+        "brandId": "5764608546395325775",
+        "shopOnlineStatus": 1,
+        "countyGroupId": "573801000001",
+        "countyId": "57380111",
+        "shopIsBanned": 0,
+        "channel": 0,
+        "pickingMode": 0,
+        "businessType": 1,
+        "businessChannel": [
+          1
+        ],
+        "status": 0,
+        "url": "",
+        "role": 1
+      },
+      {
+        "shopName": "Salchimonster (Flora)",
+        "shopId": "5764607751733642279",
+        "contractorId": "5764607535924120886",
+        "isMain": 0,
+        "cityId": "57330100",
+        "countryCode": "CO",
+        "currency": "COP",
+        "timezone": "America/Bogota",
+        "isApiConfirm": false,
+        "logo": "https://img0.didiglobal.com/static/soda_public/do1_BKIdAyz2fwbbeTfpehAp",
+        "timeOffsetInfo": {
+          "timestamp": 1771296949,
+          "offset": -18000
+        },
+        "showBizStatus": 1,
+        "brandId": "5764608546395325775",
+        "shopOnlineStatus": 1,
+        "countyGroupId": "573301000001",
+        "countyId": "57330109",
+        "shopIsBanned": 0,
+        "channel": 0,
+        "pickingMode": 0,
+        "businessType": 1,
+        "businessChannel": [
+          1
+        ],
+        "status": 0,
+        "url": "",
+        "role": 1
+      },
+      {
+        "shopName": "Salchimonster (Jamundí)",
+        "shopId": "5764607698826692518",
+        "contractorId": "5764607535924120886",
+        "isMain": 0,
+        "cityId": "57330100",
+        "countryCode": "CO",
+        "currency": "COP",
+        "timezone": "America/Bogota",
+        "isApiConfirm": false,
+        "logo": "https://img0.didiglobal.com/static/soda_public/do1_wW57ZvDfvL3JFUq47ErN",
+        "timeOffsetInfo": {
+          "timestamp": 1771296949,
+          "offset": -18000
+        },
+        "showBizStatus": 1,
+        "brandId": "5764608546395325775",
+        "shopOnlineStatus": 1,
+        "countyGroupId": "573301000001",
+        "countyId": "57330102",
+        "shopIsBanned": 0,
+        "channel": 0,
+        "pickingMode": 0,
+        "businessType": 1,
+        "businessChannel": [
+          1
+        ],
+        "status": 0,
+        "url": "",
+        "role": 1
+      },
+      {
+        "shopName": "Salchimonster (Kennedy)",
+        "shopId": "5764607540516883766",
+        "contractorId": "5764607535924120886",
+        "isMain": 0,
+        "cityId": "57380100",
+        "countryCode": "CO",
+        "currency": "COP",
+        "timezone": "America/Bogota",
+        "isApiConfirm": false,
+        "logo": "https://img0.didiglobal.com/static/soda_public/do1_B1EzA2RKXC5JNYMGCFmb",
+        "timeOffsetInfo": {
+          "timestamp": 1771296949,
+          "offset": -18000
+        },
+        "showBizStatus": 1,
+        "brandId": "5764608546395325775",
+        "shopOnlineStatus": 1,
+        "countyGroupId": "573801000001",
+        "countyId": "57380108",
+        "shopIsBanned": 0,
+        "channel": 0,
+        "pickingMode": 0,
+        "businessType": 1,
+        "businessChannel": [
+          1
+        ],
+        "status": 0,
+        "url": "",
+        "role": 1
+      },
+      {
+        "shopName": "Salchimonster (Laureles)",
+        "shopId": "5764607714484028278",
+        "contractorId": "5764607535924120886",
+        "isMain": 0,
+        "cityId": "57010100",
+        "countryCode": "CO",
+        "currency": "COP",
+        "timezone": "America/Bogota",
+        "isApiConfirm": false,
+        "logo": "https://img0.didiglobal.com/static/soda_public/do1_J2NfHhVQr7CPewQSkj3R",
+        "timeOffsetInfo": {
+          "timestamp": 1771296949,
+          "offset": -18000
+        },
+        "showBizStatus": 1,
+        "brandId": "5764608546395325775",
+        "shopOnlineStatus": 1,
+        "countyGroupId": "570101000001",
+        "countyId": "57010119",
+        "shopIsBanned": 0,
+        "channel": 0,
+        "pickingMode": 0,
+        "businessType": 1,
+        "businessChannel": [
+          1
+        ],
+        "status": 0,
+        "url": "",
+        "role": 1
+      },
+      {
+        "shopName": "Salchimonster (Modelia)",
+        "shopId": "5764607682254998348",
+        "contractorId": "5764607535924120886",
+        "isMain": 0,
+        "cityId": "57380100",
+        "countryCode": "CO",
+        "currency": "COP",
+        "timezone": "America/Bogota",
+        "isApiConfirm": false,
+        "logo": "https://img0.didiglobal.com/static/soda_public/do1_U9jc56ahFD18Vn5IDMrg",
+        "timeOffsetInfo": {
+          "timestamp": 1771296949,
+          "offset": -18000
+        },
+        "showBizStatus": 1,
+        "brandId": "5764608546395325775",
+        "shopOnlineStatus": 1,
+        "countyGroupId": "573801000001",
+        "countyId": "57380107",
+        "shopIsBanned": 0,
+        "channel": 0,
+        "pickingMode": 0,
+        "businessType": 1,
+        "businessChannel": [
+          1
+        ],
+        "status": 0,
+        "url": "",
+        "role": 1
+      },
+      {
+        "shopName": "Salchimonster (Palmira) Suspendida",
+        "shopId": "5764607767957210974",
+        "contractorId": "5764607535924120886",
+        "isMain": 0,
+        "cityId": "57330100",
+        "countryCode": "CO",
+        "currency": "COP",
+        "timezone": "America/Bogota",
+        "isApiConfirm": false,
+        "logo": "https://img0.didiglobal.com/static/soda_public/do1_p1SaJuXzqHQigPwr8eKJ",
+        "timeOffsetInfo": {
+          "timestamp": 1771296949,
+          "offset": -18000
+        },
+        "showBizStatus": 0,
+        "brandId": "0",
+        "shopOnlineStatus": 6,
+        "countyGroupId": "573301000001",
+        "countyId": "57330229",
+        "shopIsBanned": 1,
+        "channel": 0,
+        "pickingMode": 0,
+        "businessType": 1,
+        "businessChannel": [
+          1
+        ],
+        "status": 0,
+        "url": "",
+        "role": 1
+      },
+      {
+        "shopName": "Salchimonster (Parque del Perro)",
+        "shopId": "5764607612151399459",
+        "contractorId": "5764607535924120886",
+        "isMain": 0,
+        "cityId": "57330100",
+        "countryCode": "CO",
+        "currency": "COP",
+        "timezone": "America/Bogota",
+        "isApiConfirm": false,
+        "logo": "https://img0.didiglobal.com/static/soda_public/do1_KeU31nSJV9Zjl8rBkQBd",
+        "timeOffsetInfo": {
+          "timestamp": 1771296949,
+          "offset": -18000
+        },
+        "showBizStatus": 1,
+        "brandId": "5764608546395325775",
+        "shopOnlineStatus": 1,
+        "countyGroupId": "573301000001",
+        "countyId": "57330137",
+        "shopIsBanned": 0,
+        "channel": 0,
+        "pickingMode": 0,
+        "businessType": 1,
+        "businessChannel": [
+          1
+        ],
+        "status": 0,
+        "url": "",
+        "role": 1
+      },
+      {
+        "shopName": "Salchimonster (Suba)",
+        "shopId": "5764607649610730459",
+        "contractorId": "5764607535924120886",
+        "isMain": 0,
+        "cityId": "57380100",
+        "countryCode": "CO",
+        "currency": "COP",
+        "timezone": "America/Bogota",
+        "isApiConfirm": false,
+        "logo": "https://img0.didiglobal.com/static/soda_public/do1_sNmyvb5aA1XmzKrDvFNB",
+        "timeOffsetInfo": {
+          "timestamp": 1771296949,
+          "offset": -18000
+        },
+        "showBizStatus": 1,
+        "brandId": "5764608546395325775",
+        "shopOnlineStatus": 1,
+        "countyGroupId": "573801000001",
+        "countyId": "57380115",
+        "shopIsBanned": 0,
+        "channel": 0,
+        "pickingMode": 0,
+        "businessType": 1,
+        "businessChannel": [
+          1
+        ],
+        "status": 0,
+        "url": "",
+        "role": 1
+      }
+    ]
+  }
+}

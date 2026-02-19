@@ -2,9 +2,14 @@
 credentials.json
 cookies.json
 token.json
+didi_credentials.json
+didi_cookies.json
+didi_new_orders.json
+didi_daily_orders.json
 .env
 .env.*
 !.env.example
+deploy/*.secret
 
 # --- Python ---
 venv/

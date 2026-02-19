@@ -1,0 +1,179 @@
+{
+    "errno": 0,
+    "errmsg": "ok",
+    "requestId": "0a93d8c86996640f96f3530567057302",
+    "time": 1771463695,
+    "msectime": 1771463695958,
+    "data": {
+        "highlight": [],
+        "serving": [
+            {
+                "orderId": "5764659940090249419",
+                "displayNum": "#379010",
+                "orderIndex": 379010,
+                "uid": 369436938179510,
+                "shopId": "5764607903257069379",
+                "displayStatus": 3,
+                "highlight": 0,
+                "orderStatus": 400,
+                "currency": "COP",
+                "deliveryType": 1,
+                "deliveryTypeText": "Entrega de DiDi",
+                "highlightType": 0,
+                "highlightTs": 0,
+                "highlightTsOffsetInfo": {
+                    "timestamp": 0,
+                    "offset": -18000
+                },
+                "itemReadyEta": 1771462560,
+                "itemReadyEtaOffsetInfo": {
+                    "timestamp": 1771462560,
+                    "offset": -18000
+                },
+                "shopConfirmTime": 1771461600,
+                "shopConfirmTimeOffsetInfo": {
+                    "timestamp": 1771461600,
+                    "offset": -18000
+                },
+                "createTime": 1771461594,
+                "createTimeOffsetInfo": {
+                    "timestamp": 1771461594,
+                    "offset": -18000
+                },
+                "updateTime": 1771463316,
+                "updateTimeOffsetInfo": {
+                    "timestamp": 1771463316,
+                    "offset": -18000
+                },
+                "remark": "",
+                "countDownInfo": {
+                    "startTs": {
+                        "timestamp": 0,
+                        "offset": 0
+                    },
+                    "endTs": {
+                        "timestamp": 0,
+                        "offset": 0
+                    },
+                    "countDown": false
+                },
+                "extActions": [],
+                "deliveryStatus": 140,
+                "receiverInfo": {
+                    "name": "Usuario"
+                },
+                "orderType": 2,
+                "isPrinted": 1,
+                "displayInfo": {
+                    "tips": "",
+                    "statusText": "Entregando",
+                    "countDown": false,
+                    "tags": [],
+                    "type": 0
+                },
+                "payTag": {
+                    "payType": 1
+                },
+                "payType": 1,
+                "propertyTagList": [],
+                "statusList": [
+                    {
+                        "type": 3,
+                        "text": "Entregando"
+                    }
+                ],
+                "exceptionTagList": [],
+                "afterSalesInfo": null,
+                "isGuideTest": 0
+            },
+            {
+                "orderId": "5764659866773815540",
+                "displayNum": "#379008",
+                "orderIndex": 379008,
+                "uid": 369436477093478,
+                "shopId": "5764607903257069379",
+                "displayStatus": 3,
+                "highlight": 0,
+                "orderStatus": 400,
+                "currency": "COP",
+                "deliveryType": 1,
+                "deliveryTypeText": "Entrega de DiDi",
+                "highlightType": 0,
+                "highlightTs": 0,
+                "highlightTsOffsetInfo": {
+                    "timestamp": 0,
+                    "offset": -18000
+                },
+                "itemReadyEta": 1771461796,
+                "itemReadyEtaOffsetInfo": {
+                    "timestamp": 1771461796,
+                    "offset": -18000
+                },
+                "shopConfirmTime": 1771460836,
+                "shopConfirmTimeOffsetInfo": {
+                    "timestamp": 1771460836,
+                    "offset": -18000
+                },
+                "createTime": 1771460828,
+                "createTimeOffsetInfo": {
+                    "timestamp": 1771460828,
+                    "offset": -18000
+                },
+                "updateTime": 1771461659,
+                "updateTimeOffsetInfo": {
+                    "timestamp": 1771461659,
+                    "offset": -18000
+                },
+                "remark": "",
+                "countDownInfo": {
+                    "startTs": {
+                        "timestamp": 0,
+                        "offset": 0
+                    },
+                    "endTs": {
+                        "timestamp": 0,
+                        "offset": 0
+                    },
+                    "countDown": false
+                },
+                "extActions": [],
+                "deliveryStatus": 140,
+                "receiverInfo": {
+                    "name": "juan"
+                },
+                "orderType": 2,
+                "isPrinted": 1,
+                "displayInfo": {
+                    "tips": "",
+                    "statusText": "Entregando",
+                    "countDown": false,
+                    "tags": [],
+                    "type": 0
+                },
+                "payTag": {
+                    "payType": 1
+                },
+                "payType": 1,
+                "propertyTagList": [],
+                "statusList": [
+                    {
+                        "type": 3,
+                        "text": "Entregando"
+                    }
+                ],
+                "exceptionTagList": [],
+                "afterSalesInfo": null,
+                "isGuideTest": 0
+            }
+        ],
+        "pollingInterval": 30,
+        "count": 2,
+        "isMain": 0,
+        "redirectInfo": {
+            "version": "V3",
+            "ext": {
+                "info": ""
+            }
+        }
+    }
+}

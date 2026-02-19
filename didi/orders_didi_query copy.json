@@ -1,0 +1,1094 @@
+{
+    "errno": 0,
+    "errmsg": "ok",
+    "requestId": "0a9e81d769962b4472ff4ef15046a902",
+    "time": 1771449157,
+    "msectime": 1771449157257,
+    "data": {
+        "total": 43,
+        "totalPage": 3,
+        "orderList": [
+            {
+                "orderId": "5764659720031898638",
+                "orderIndex": {
+                    "index": 684001,
+                    "displayText": "#684001"
+                },
+                "sourceDescription": "",
+                "shopInfo": {
+                    "shopId": "5764608040964460084",
+                    "name": "Burger Monster (Modelia)"
+                },
+                "country": "CO",
+                "cityId": 57380100,
+                "currency": "COP",
+                "orderStatusInfo": {
+                    "status": 20600,
+                    "subStatus": 0,
+                    "displayText": "Completado",
+                    "reason": "",
+                    "tagList": []
+                },
+                "receiverInfo": {
+                    "name": "alan Rebolledo"
+                },
+                "deliveryInfo": {
+                    "type": 1,
+                    "fulfillmentMode": 0,
+                    "displayText": "Entrega por DiDi Food"
+                },
+                "sales": {
+                    "amount": 4370000,
+                    "displayText": "$43.700"
+                },
+                "orderIncome": {
+                    "amount": 1813500,
+                    "displayText": "$18.135"
+                },
+                "payInfo": {
+                    "type": 1,
+                    "displayText": ""
+                },
+                "shopConfirmTime": 1771388483,
+                "shopConfirmTimeOffsetInfo": {
+                    "timestamp": 1771388483,
+                    "offset": -18000
+                },
+                "actionList": [],
+                "refundInfo": null,
+                "createTime": 1771388479,
+                "createTimeOffsetInfo": {
+                    "timestamp": 1771388479,
+                    "offset": -18000
+                }
+            },
+            {
+                "orderId": "5764659591531007003",
+                "orderIndex": {
+                    "index": 357002,
+                    "displayText": "#357002"
+                },
+                "sourceDescription": "",
+                "shopInfo": {
+                    "shopId": "5764607911230443057",
+                    "name": "Burger Monster (Jamund\u00ed)"
+                },
+                "country": "CO",
+                "cityId": 57330100,
+                "currency": "COP",
+                "orderStatusInfo": {
+                    "status": 20900,
+                    "subStatus": 202,
+                    "displayText": "Cancelado",
+                    "reason": "El sistema cierra el pedido debido a un error antes de que se asigne un socio repartidor",
+                    "tagList": []
+                },
+                "receiverInfo": {
+                    "name": " "
+                },
+                "deliveryInfo": {
+                    "type": 1,
+                    "fulfillmentMode": 0,
+                    "displayText": "Entrega por DiDi Food"
+                },
+                "sales": {
+                    "amount": 11480000,
+                    "displayText": "$114.800"
+                },
+                "orderIncome": {
+                    "amount": 4764200,
+                    "displayText": "$47.642"
+                },
+                "payInfo": {
+                    "type": 1,
+                    "displayText": ""
+                },
+                "shopConfirmTime": 1771388105,
+                "shopConfirmTimeOffsetInfo": {
+                    "timestamp": 1771388105,
+                    "offset": -18000
+                },
+                "actionList": [],
+                "refundInfo": null,
+                "createTime": 1771388101,
+                "createTimeOffsetInfo": {
+                    "timestamp": 1771388101,
+                    "offset": -18000
+                }
+            },
+            {
+                "orderId": "5764659496039287851",
+                "orderIndex": {
+                    "index": 958005,
+                    "displayText": "#958005"
+                },
+                "sourceDescription": "",
+                "shopInfo": {
+                    "shopId": "5764608014003473958",
+                    "name": "Burger Monster (Flora)"
+                },
+                "country": "CO",
+                "cityId": 57330100,
+                "currency": "COP",
+                "orderStatusInfo": {
+                    "status": 20600,
+                    "subStatus": 0,
+                    "displayText": "Completado",
+                    "reason": "",
+                    "tagList": []
+                },
+                "receiverInfo": {
+                    "name": "Jaime David Monta\u00f1o"
+                },
+                "deliveryInfo": {
+                    "type": 1,
+                    "fulfillmentMode": 0,
+                    "displayText": "Entrega por DiDi Food"
+                },
+                "sales": {
+                    "amount": 7820000,
+                    "displayText": "$78.200"
+                },
+                "orderIncome": {
+                    "amount": 3894300,
+                    "displayText": "$38.943"
+                },
+                "payInfo": {
+                    "type": 1,
+                    "displayText": ""
+                },
+                "shopConfirmTime": 1771387842,
+                "shopConfirmTimeOffsetInfo": {
+                    "timestamp": 1771387842,
+                    "offset": -18000
+                },
+                "actionList": [],
+                "refundInfo": null,
+                "createTime": 1771387825,
+                "createTimeOffsetInfo": {
+                    "timestamp": 1771387825,
+                    "offset": -18000
+                }
+            },
+            {
+                "orderId": "5764659477894728701",
+                "orderIndex": {
+                    "index": 958004,
+                    "displayText": "#958004"
+                },
+                "sourceDescription": "",
+                "shopInfo": {
+                    "shopId": "5764608014003473958",
+                    "name": "Burger Monster (Flora)"
+                },
+                "country": "CO",
+                "cityId": 57330100,
+                "currency": "COP",
+                "orderStatusInfo": {
+                    "status": 20600,
+                    "subStatus": 0,
+                    "displayText": "Completado",
+                    "reason": "",
+                    "tagList": []
+                },
+                "receiverInfo": {
+                    "name": " "
+                },
+                "deliveryInfo": {
+                    "type": 1,
+                    "fulfillmentMode": 0,
+                    "displayText": "Entrega por DiDi Food"
+                },
+                "sales": {
+                    "amount": 3690000,
+                    "displayText": "$36.900"
+                },
+                "orderIncome": {
+                    "amount": 1531300,
+                    "displayText": "$15.313"
+                },
+                "payInfo": {
+                    "type": 1,
+                    "displayText": ""
+                },
+                "shopConfirmTime": 1771387241,
+                "shopConfirmTimeOffsetInfo": {
+                    "timestamp": 1771387241,
+                    "offset": -18000
+                },
+                "actionList": [],
+                "refundInfo": null,
+                "createTime": 1771387235,
+                "createTimeOffsetInfo": {
+                    "timestamp": 1771387235,
+                    "offset": -18000
+                }
+            },
+            {
+                "orderId": "5764659724654021650",
+                "orderIndex": {
+                    "index": 569001,
+                    "displayText": "#569001"
+                },
+                "sourceDescription": "",
+                "shopInfo": {
+                    "shopId": "5764607950669483569",
+                    "name": "Burger Monster (Ciudad Montes)"
+                },
+                "country": "CO",
+                "cityId": 57380100,
+                "currency": "COP",
+                "orderStatusInfo": {
+                    "status": 20600,
+                    "subStatus": 0,
+                    "displayText": "Completado",
+                    "reason": "",
+                    "tagList": []
+                },
+                "receiverInfo": {
+                    "name": "Jenny Martinez"
+                },
+                "deliveryInfo": {
+                    "type": 1,
+                    "fulfillmentMode": 0,
+                    "displayText": "Entrega por DiDi Food"
+                },
+                "sales": {
+                    "amount": 4370000,
+                    "displayText": "$43.700"
+                },
+                "orderIncome": {
+                    "amount": 1813500,
+                    "displayText": "$18.135"
+                },
+                "payInfo": {
+                    "type": 1,
+                    "displayText": ""
+                },
+                "shopConfirmTime": 1771386540,
+                "shopConfirmTimeOffsetInfo": {
+                    "timestamp": 1771386540,
+                    "offset": -18000
+                },
+                "actionList": [],
+                "refundInfo": null,
+                "createTime": 1771386536,
+                "createTimeOffsetInfo": {
+                    "timestamp": 1771386536,
+                    "offset": -18000
+                }
+            },
+            {
+                "orderId": "5764659595624647670",
+                "orderIndex": {
+                    "index": 958003,
+                    "displayText": "#958003"
+                },
+                "sourceDescription": "",
+                "shopInfo": {
+                    "shopId": "5764608014003473958",
+                    "name": "Burger Monster (Flora)"
+                },
+                "country": "CO",
+                "cityId": 57330100,
+                "currency": "COP",
+                "orderStatusInfo": {
+                    "status": 20900,
+                    "subStatus": 201,
+                    "displayText": "Cancelado",
+                    "reason": "No se pudo continuar con la entrega",
+                    "tagList": []
+                },
+                "receiverInfo": {
+                    "name": " "
+                },
+                "deliveryInfo": {
+                    "type": 1,
+                    "fulfillmentMode": 0,
+                    "displayText": "Entrega por DiDi Food"
+                },
+                "sales": {
+                    "amount": 9740000,
+                    "displayText": "$97.400"
+                },
+                "orderIncome": {
+                    "amount": 4850500,
+                    "displayText": "$48.505"
+                },
+                "payInfo": {
+                    "type": 1,
+                    "displayText": ""
+                },
+                "shopConfirmTime": 1771383746,
+                "shopConfirmTimeOffsetInfo": {
+                    "timestamp": 1771383746,
+                    "offset": -18000
+                },
+                "actionList": [],
+                "refundInfo": null,
+                "createTime": 1771383739,
+                "createTimeOffsetInfo": {
+                    "timestamp": 1771383739,
+                    "offset": -18000
+                }
+            },
+            {
+                "orderId": "5764659602125818780",
+                "orderIndex": {
+                    "index": 508005,
+                    "displayText": "#508005"
+                },
+                "sourceDescription": "",
+                "shopInfo": {
+                    "shopId": "5764608013307219508",
+                    "name": "Burger Monster (Bochalema)"
+                },
+                "country": "CO",
+                "cityId": 57330100,
+                "currency": "COP",
+                "orderStatusInfo": {
+                    "status": 20600,
+                    "subStatus": 0,
+                    "displayText": "Completado",
+                    "reason": "",
+                    "tagList": []
+                },
+                "receiverInfo": {
+                    "name": "William Arag\u00f3n"
+                },
+                "deliveryInfo": {
+                    "type": 1,
+                    "fulfillmentMode": 0,
+                    "displayText": "Entrega por DiDi Food"
+                },
+                "sales": {
+                    "amount": 7380000,
+                    "displayText": "$73.800"
+                },
+                "orderIncome": {
+                    "amount": 3062700,
+                    "displayText": "$30.627"
+                },
+                "payInfo": {
+                    "type": 1,
+                    "displayText": ""
+                },
+                "shopConfirmTime": 1771381046,
+                "shopConfirmTimeOffsetInfo": {
+                    "timestamp": 1771381046,
+                    "offset": -18000
+                },
+                "actionList": [],
+                "refundInfo": null,
+                "createTime": 1771381040,
+                "createTimeOffsetInfo": {
+                    "timestamp": 1771381040,
+                    "offset": -18000
+                }
+            },
+            {
+                "orderId": "5764659596568365979",
+                "orderIndex": {
+                    "index": 185004,
+                    "displayText": "#185004"
+                },
+                "sourceDescription": "",
+                "shopInfo": {
+                    "shopId": "5764608011633692185",
+                    "name": "Burger Monster (Parque del Perro)"
+                },
+                "country": "CO",
+                "cityId": 57330100,
+                "currency": "COP",
+                "orderStatusInfo": {
+                    "status": 20600,
+                    "subStatus": 0,
+                    "displayText": "Completado",
+                    "reason": "",
+                    "tagList": []
+                },
+                "receiverInfo": {
+                    "name": " "
+                },
+                "deliveryInfo": {
+                    "type": 1,
+                    "fulfillmentMode": 0,
+                    "displayText": "Entrega por DiDi Food"
+                },
+                "sales": {
+                    "amount": 3910000,
+                    "displayText": "$39.100"
+                },
+                "orderIncome": {
+                    "amount": 1947100,
+                    "displayText": "$19.471"
+                },
+                "payInfo": {
+                    "type": 1,
+                    "displayText": ""
+                },
+                "shopConfirmTime": 1771380845,
+                "shopConfirmTimeOffsetInfo": {
+                    "timestamp": 1771380845,
+                    "offset": -18000
+                },
+                "actionList": [],
+                "refundInfo": null,
+                "createTime": 1771380841,
+                "createTimeOffsetInfo": {
+                    "timestamp": 1771380841,
+                    "offset": -18000
+                }
+            },
+            {
+                "orderId": "5764659510002125704",
+                "orderIndex": {
+                    "index": 311001,
+                    "displayText": "#311001"
+                },
+                "sourceDescription": "",
+                "shopInfo": {
+                    "shopId": "5764608025059659311",
+                    "name": "Burger Monster (Laureles)"
+                },
+                "country": "CO",
+                "cityId": 57010100,
+                "currency": "COP",
+                "orderStatusInfo": {
+                    "status": 20600,
+                    "subStatus": 0,
+                    "displayText": "Completado",
+                    "reason": "",
+                    "tagList": []
+                },
+                "receiverInfo": {
+                    "name": "Jorge Rodriguez"
+                },
+                "deliveryInfo": {
+                    "type": 1,
+                    "fulfillmentMode": 0,
+                    "displayText": "Entrega por DiDi Food"
+                },
+                "sales": {
+                    "amount": 4920000,
+                    "displayText": "$49.200"
+                },
+                "orderIncome": {
+                    "amount": 2041800,
+                    "displayText": "$20.418"
+                },
+                "payInfo": {
+                    "type": 1,
+                    "displayText": ""
+                },
+                "shopConfirmTime": 1771380067,
+                "shopConfirmTimeOffsetInfo": {
+                    "timestamp": 1771380067,
+                    "offset": -18000
+                },
+                "actionList": [],
+                "refundInfo": null,
+                "createTime": 1771380061,
+                "createTimeOffsetInfo": {
+                    "timestamp": 1771380061,
+                    "offset": -18000
+                }
+            },
+            {
+                "orderId": "5764659494961351521",
+                "orderIndex": {
+                    "index": 357001,
+                    "displayText": "#357001"
+                },
+                "sourceDescription": "",
+                "shopInfo": {
+                    "shopId": "5764607911230443057",
+                    "name": "Burger Monster (Jamund\u00ed)"
+                },
+                "country": "CO",
+                "cityId": 57330100,
+                "currency": "COP",
+                "orderStatusInfo": {
+                    "status": 20600,
+                    "subStatus": 0,
+                    "displayText": "Completado",
+                    "reason": "",
+                    "tagList": []
+                },
+                "receiverInfo": {
+                    "name": "Jhonatan Betancourt"
+                },
+                "deliveryInfo": {
+                    "type": 1,
+                    "fulfillmentMode": 0,
+                    "displayText": "Entrega por DiDi Food"
+                },
+                "sales": {
+                    "amount": 7820000,
+                    "displayText": "$78.200"
+                },
+                "orderIncome": {
+                    "amount": 3894300,
+                    "displayText": "$38.943"
+                },
+                "payInfo": {
+                    "type": 1,
+                    "displayText": ""
+                },
+                "shopConfirmTime": 1771379294,
+                "shopConfirmTimeOffsetInfo": {
+                    "timestamp": 1771379294,
+                    "offset": -18000
+                },
+                "actionList": [],
+                "refundInfo": null,
+                "createTime": 1771379143,
+                "createTimeOffsetInfo": {
+                    "timestamp": 1771379143,
+                    "offset": -18000
+                }
+            },
+            {
+                "orderId": "5764659677187083019",
+                "orderIndex": {
+                    "index": 958002,
+                    "displayText": "#958002"
+                },
+                "sourceDescription": "",
+                "shopInfo": {
+                    "shopId": "5764608014003473958",
+                    "name": "Burger Monster (Flora)"
+                },
+                "country": "CO",
+                "cityId": 57330100,
+                "currency": "COP",
+                "orderStatusInfo": {
+                    "status": 20600,
+                    "subStatus": 0,
+                    "displayText": "Completado",
+                    "reason": "",
+                    "tagList": []
+                },
+                "receiverInfo": {
+                    "name": "Kary Cordoba"
+                },
+                "deliveryInfo": {
+                    "type": 1,
+                    "fulfillmentMode": 0,
+                    "displayText": "Entrega por DiDi Food"
+                },
+                "sales": {
+                    "amount": 6840000,
+                    "displayText": "$68.400"
+                },
+                "orderIncome": {
+                    "amount": 3406300,
+                    "displayText": "$34.063"
+                },
+                "payInfo": {
+                    "type": 1,
+                    "displayText": ""
+                },
+                "shopConfirmTime": 1771377275,
+                "shopConfirmTimeOffsetInfo": {
+                    "timestamp": 1771377275,
+                    "offset": -18000
+                },
+                "actionList": [],
+                "refundInfo": null,
+                "createTime": 1771377269,
+                "createTimeOffsetInfo": {
+                    "timestamp": 1771377269,
+                    "offset": -18000
+                }
+            },
+            {
+                "orderId": "5764659614104750866",
+                "orderIndex": {
+                    "index": 508004,
+                    "displayText": "#508004"
+                },
+                "sourceDescription": "",
+                "shopInfo": {
+                    "shopId": "5764608013307219508",
+                    "name": "Burger Monster (Bochalema)"
+                },
+                "country": "CO",
+                "cityId": 57330100,
+                "currency": "COP",
+                "orderStatusInfo": {
+                    "status": 20600,
+                    "subStatus": 0,
+                    "displayText": "Completado",
+                    "reason": "",
+                    "tagList": []
+                },
+                "receiverInfo": {
+                    "name": "Diego Tapia *****"
+                },
+                "deliveryInfo": {
+                    "type": 1,
+                    "fulfillmentMode": 0,
+                    "displayText": "Entrega por DiDi Food"
+                },
+                "sales": {
+                    "amount": 7240000,
+                    "displayText": "$72.400"
+                },
+                "orderIncome": {
+                    "amount": 3004600,
+                    "displayText": "$30.046"
+                },
+                "payInfo": {
+                    "type": 1,
+                    "displayText": ""
+                },
+                "shopConfirmTime": 1771376637,
+                "shopConfirmTimeOffsetInfo": {
+                    "timestamp": 1771376637,
+                    "offset": -18000
+                },
+                "actionList": [],
+                "refundInfo": null,
+                "createTime": 1771376628,
+                "createTimeOffsetInfo": {
+                    "timestamp": 1771376628,
+                    "offset": -18000
+                }
+            },
+            {
+                "orderId": "5764659524493445908",
+                "orderIndex": {
+                    "index": 508003,
+                    "displayText": "#508003"
+                },
+                "sourceDescription": "",
+                "shopInfo": {
+                    "shopId": "5764608013307219508",
+                    "name": "Burger Monster (Bochalema)"
+                },
+                "country": "CO",
+                "cityId": 57330100,
+                "currency": "COP",
+                "orderStatusInfo": {
+                    "status": 20600,
+                    "subStatus": 0,
+                    "displayText": "Completado",
+                    "reason": "",
+                    "tagList": []
+                },
+                "receiverInfo": {
+                    "name": "Jhon edward Ocampo erazo"
+                },
+                "deliveryInfo": {
+                    "type": 1,
+                    "fulfillmentMode": 0,
+                    "displayText": "Entrega por DiDi Food"
+                },
+                "sales": {
+                    "amount": 10530000,
+                    "displayText": "$105.300"
+                },
+                "orderIncome": {
+                    "amount": 4937600,
+                    "displayText": "$49.376"
+                },
+                "payInfo": {
+                    "type": 1,
+                    "displayText": ""
+                },
+                "shopConfirmTime": 1771376122,
+                "shopConfirmTimeOffsetInfo": {
+                    "timestamp": 1771376122,
+                    "offset": -18000
+                },
+                "actionList": [],
+                "refundInfo": null,
+                "createTime": 1771376118,
+                "createTimeOffsetInfo": {
+                    "timestamp": 1771376118,
+                    "offset": -18000
+                }
+            },
+            {
+                "orderId": "5764659730152753880",
+                "orderIndex": {
+                    "index": 508002,
+                    "displayText": "#508002"
+                },
+                "sourceDescription": "",
+                "shopInfo": {
+                    "shopId": "5764608013307219508",
+                    "name": "Burger Monster (Bochalema)"
+                },
+                "country": "CO",
+                "cityId": 57330100,
+                "currency": "COP",
+                "orderStatusInfo": {
+                    "status": 20600,
+                    "subStatus": 0,
+                    "displayText": "Completado",
+                    "reason": "",
+                    "tagList": []
+                },
+                "receiverInfo": {
+                    "name": "Karol Diaz"
+                },
+                "deliveryInfo": {
+                    "type": 1,
+                    "fulfillmentMode": 0,
+                    "displayText": "Entrega por DiDi Food"
+                },
+                "sales": {
+                    "amount": 4370000,
+                    "displayText": "$43.700"
+                },
+                "orderIncome": {
+                    "amount": 1813500,
+                    "displayText": "$18.135"
+                },
+                "payInfo": {
+                    "type": 1,
+                    "displayText": ""
+                },
+                "shopConfirmTime": 1771375165,
+                "shopConfirmTimeOffsetInfo": {
+                    "timestamp": 1771375165,
+                    "offset": -18000
+                },
+                "actionList": [],
+                "refundInfo": null,
+                "createTime": 1771375160,
+                "createTimeOffsetInfo": {
+                    "timestamp": 1771375160,
+                    "offset": -18000
+                }
+            },
+            {
+                "orderId": "5764659584564267731",
+                "orderIndex": {
+                    "index": 185003,
+                    "displayText": "#185003"
+                },
+                "sourceDescription": "",
+                "shopInfo": {
+                    "shopId": "5764608011633692185",
+                    "name": "Burger Monster (Parque del Perro)"
+                },
+                "country": "CO",
+                "cityId": 57330100,
+                "currency": "COP",
+                "orderStatusInfo": {
+                    "status": 20600,
+                    "subStatus": 0,
+                    "displayText": "Completado",
+                    "reason": "",
+                    "tagList": []
+                },
+                "receiverInfo": {
+                    "name": "Fernanda Zuluaga"
+                },
+                "deliveryInfo": {
+                    "type": 1,
+                    "fulfillmentMode": 0,
+                    "displayText": "Entrega por DiDi Food"
+                },
+                "sales": {
+                    "amount": 5470000,
+                    "displayText": "$54.700"
+                },
+                "orderIncome": {
+                    "amount": 2724000,
+                    "displayText": "$27.240"
+                },
+                "payInfo": {
+                    "type": 1,
+                    "displayText": ""
+                },
+                "shopConfirmTime": 1771374786,
+                "shopConfirmTimeOffsetInfo": {
+                    "timestamp": 1771374786,
+                    "offset": -18000
+                },
+                "actionList": [],
+                "refundInfo": null,
+                "createTime": 1771374782,
+                "createTimeOffsetInfo": {
+                    "timestamp": 1771374782,
+                    "offset": -18000
+                }
+            },
+            {
+                "orderId": "5764659698817108562",
+                "orderIndex": {
+                    "index": 185002,
+                    "displayText": "#185002"
+                },
+                "sourceDescription": "",
+                "shopInfo": {
+                    "shopId": "5764608011633692185",
+                    "name": "Burger Monster (Parque del Perro)"
+                },
+                "country": "CO",
+                "cityId": 57330100,
+                "currency": "COP",
+                "orderStatusInfo": {
+                    "status": 20600,
+                    "subStatus": 0,
+                    "displayText": "Completado",
+                    "reason": "",
+                    "tagList": []
+                },
+                "receiverInfo": {
+                    "name": "Jhany Tola"
+                },
+                "deliveryInfo": {
+                    "type": 1,
+                    "fulfillmentMode": 0,
+                    "displayText": "Entrega por DiDi Food"
+                },
+                "sales": {
+                    "amount": 3680000,
+                    "displayText": "$36.800"
+                },
+                "orderIncome": {
+                    "amount": 1796100,
+                    "displayText": "$17.961"
+                },
+                "payInfo": {
+                    "type": 1,
+                    "displayText": ""
+                },
+                "shopConfirmTime": 1771372858,
+                "shopConfirmTimeOffsetInfo": {
+                    "timestamp": 1771372858,
+                    "offset": -18000
+                },
+                "actionList": [],
+                "refundInfo": null,
+                "createTime": 1771372853,
+                "createTimeOffsetInfo": {
+                    "timestamp": 1771372853,
+                    "offset": -18000
+                }
+            },
+            {
+                "orderId": "5764659683403041351",
+                "orderIndex": {
+                    "index": 508001,
+                    "displayText": "#508001"
+                },
+                "sourceDescription": "",
+                "shopInfo": {
+                    "shopId": "5764608013307219508",
+                    "name": "Burger Monster (Bochalema)"
+                },
+                "country": "CO",
+                "cityId": 57330100,
+                "currency": "COP",
+                "orderStatusInfo": {
+                    "status": 20600,
+                    "subStatus": 0,
+                    "displayText": "Completado",
+                    "reason": "",
+                    "tagList": []
+                },
+                "receiverInfo": {
+                    "name": "Andres Felipe Murillo"
+                },
+                "deliveryInfo": {
+                    "type": 1,
+                    "fulfillmentMode": 0,
+                    "displayText": "Entrega por DiDi Food"
+                },
+                "sales": {
+                    "amount": 6840000,
+                    "displayText": "$68.400"
+                },
+                "orderIncome": {
+                    "amount": 3406300,
+                    "displayText": "$34.063"
+                },
+                "payInfo": {
+                    "type": 1,
+                    "displayText": ""
+                },
+                "shopConfirmTime": 1771371602,
+                "shopConfirmTimeOffsetInfo": {
+                    "timestamp": 1771371602,
+                    "offset": -18000
+                },
+                "actionList": [],
+                "refundInfo": null,
+                "createTime": 1771371598,
+                "createTimeOffsetInfo": {
+                    "timestamp": 1771371598,
+                    "offset": -18000
+                }
+            },
+            {
+                "orderId": "5764659583704435244",
+                "orderIndex": {
+                    "index": 958001,
+                    "displayText": "#958001"
+                },
+                "sourceDescription": "",
+                "shopInfo": {
+                    "shopId": "5764608014003473958",
+                    "name": "Burger Monster (Flora)"
+                },
+                "country": "CO",
+                "cityId": 57330100,
+                "currency": "COP",
+                "orderStatusInfo": {
+                    "status": 20600,
+                    "subStatus": 0,
+                    "displayText": "Completado",
+                    "reason": "",
+                    "tagList": []
+                },
+                "receiverInfo": {
+                    "name": "Juan Camilo"
+                },
+                "deliveryInfo": {
+                    "type": 1,
+                    "fulfillmentMode": 0,
+                    "displayText": "Entrega por DiDi Food"
+                },
+                "sales": {
+                    "amount": 11070000,
+                    "displayText": "$110.700"
+                },
+                "orderIncome": {
+                    "amount": 4594000,
+                    "displayText": "$45.940"
+                },
+                "payInfo": {
+                    "type": 1,
+                    "displayText": ""
+                },
+                "shopConfirmTime": 1771371410,
+                "shopConfirmTimeOffsetInfo": {
+                    "timestamp": 1771371410,
+                    "offset": -18000
+                },
+                "actionList": [],
+                "refundInfo": null,
+                "createTime": 1771371405,
+                "createTimeOffsetInfo": {
+                    "timestamp": 1771371405,
+                    "offset": -18000
+                }
+            },
+            {
+                "orderId": "5764659677480684086",
+                "orderIndex": {
+                    "index": 185001,
+                    "displayText": "#185001"
+                },
+                "sourceDescription": "",
+                "shopInfo": {
+                    "shopId": "5764608011633692185",
+                    "name": "Burger Monster (Parque del Perro)"
+                },
+                "country": "CO",
+                "cityId": 57330100,
+                "currency": "COP",
+                "orderStatusInfo": {
+                    "status": 20600,
+                    "subStatus": 0,
+                    "displayText": "Completado",
+                    "reason": "",
+                    "tagList": []
+                },
+                "receiverInfo": {
+                    "name": "juan Martinez"
+                },
+                "deliveryInfo": {
+                    "type": 1,
+                    "fulfillmentMode": 0,
+                    "displayText": "Entrega por DiDi Food"
+                },
+                "sales": {
+                    "amount": 6840000,
+                    "displayText": "$68.400"
+                },
+                "orderIncome": {
+                    "amount": 3406300,
+                    "displayText": "$34.063"
+                },
+                "payInfo": {
+                    "type": 1,
+                    "displayText": ""
+                },
+                "shopConfirmTime": 1771371377,
+                "shopConfirmTimeOffsetInfo": {
+                    "timestamp": 1771371377,
+                    "offset": -18000
+                },
+                "actionList": [],
+                "refundInfo": null,
+                "createTime": 1771371371,
+                "createTimeOffsetInfo": {
+                    "timestamp": 1771371371,
+                    "offset": -18000
+                }
+            },
+            {
+                "orderId": "5764659552406538431",
+                "orderIndex": {
+                    "index": 867002,
+                    "displayText": "#867002"
+                },
+                "sourceDescription": "",
+                "shopInfo": {
+                    "shopId": "5764607906398604867",
+                    "name": "Burger Monster (Kennedy)"
+                },
+                "country": "CO",
+                "cityId": 57380100,
+                "currency": "COP",
+                "orderStatusInfo": {
+                    "status": 20600,
+                    "subStatus": 0,
+                    "displayText": "Completado",
+                    "reason": "",
+                    "tagList": []
+                },
+                "receiverInfo": {
+                    "name": "Yaya Morales"
+                },
+                "deliveryInfo": {
+                    "type": 1,
+                    "fulfillmentMode": 0,
+                    "displayText": "Entrega por DiDi Food"
+                },
+                "sales": {
+                    "amount": 2870000,
+                    "displayText": "$28.700"
+                },
+                "orderIncome": {
+                    "amount": 1191000,
+                    "displayText": "$11.910"
+                },
+                "payInfo": {
+                    "type": 1,
+                    "displayText": ""
+                },
+                "shopConfirmTime": 1771363529,
+                "shopConfirmTimeOffsetInfo": {
+                    "timestamp": 1771363529,
+                    "offset": -18000
+                },
+                "actionList": [],
+                "refundInfo": null,
+                "createTime": 1771363525,
+                "createTimeOffsetInfo": {
+                    "timestamp": 1771363525,
+                    "offset": -18000
+                }
+            }
+        ],
+        "shopAppealGray": false
+    }
+}

@@ -1,0 +1,29 @@
+{
+  "_comment": "shopId de sedes que NO son Salchimonster (ej. Burger Monster). Se excluyen al consultar.",
+  "shop_ids": [
+    "5764608013307219508",
+    "5764608135537623356",
+    "5764607870650551872",
+    "5764607950669483569",
+    "5764608014003473958",
+    "5764607911230443057",
+    "5764607906398604867",
+    "5764608025059659311",
+    "5764608040964460084",
+    "5764608011633692185",
+    "5764607819974970934"
+  ],
+  "_names": [
+    "Burger Monster (Bochalema)",
+    "Burger Monster (Cedritos)",
+    "Burger Monster (City U)",
+    "Burger Monster (Ciudad Montes)",
+    "Burger Monster (Flora)",
+    "Burger Monster (Jamundí)",
+    "Burger Monster (Kennedy)",
+    "Burger Monster (Laureles)",
+    "Burger Monster (Modelia)",
+    "Burger Monster (Parque del Perro)",
+    "Burger Monster (Suba)"
+  ]
+}
