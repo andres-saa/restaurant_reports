@@ -39,7 +39,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel
 
 from app.config import (
@@ -686,6 +686,46 @@ def _do_login_sync() -> dict:
         "token": token,
         "saved_cookies": len(cookies),
         "data_preview": list(body.get("data", {}).keys())[:10] if isinstance(body, dict) and body.get("data") else None,
+    }
+
+
+@app.post("/login")
+async def do_login(method: str = Query(default="api")):
+    """Ejecuta el login usando las credenciales guardadas. method=form usa Playwright por formulario."""
+    cred = _read_json(CREDENTIALS_FILE, {})
+    if not cred:
+        raise HTTPException(status_code=503, detail="No hay credenciales. Usa PUT /credentials para configurarlas.")
+    cred_masked = {k: "********" if k == "usuario_clave" else v for k, v in cred.items()}
+    fn = _do_login_form_sync if method == "form" else _do_login_sync
+    loop = asyncio.get_event_loop()
+    future = loop.run_in_executor(_get_executor(), fn)
+    while not future.done():
+        try:
+            while True:
+                msg = _login_status_queue.get_nowait()
+                await _broadcast_credentials_status(msg)
+        except queue.Empty:
+            pass
+        await asyncio.sleep(0.05)
+    while True:
+        try:
+            msg = _login_status_queue.get_nowait()
+            await _broadcast_credentials_status(msg)
+        except queue.Empty:
+            break
+    result = future.result()
+    success = result.get("success", False) and not result.get("_is_error", False)
+    if result.get("_is_error"):
+        code = result.get("status_code", 500)
+        return JSONResponse(status_code=code, content={
+            "message": result.get("message", "Error en login"),
+            "success": False,
+            "credentials": cred_masked,
+        })
+    return {
+        "message": result.get("message", "Login realizado"),
+        "success": True,
+        "credentials": cred_masked,
     }
 
 
@@ -2668,24 +2708,19 @@ def api_apelaciones_reporte(
     }
 
 
-@app.get("/api/reporte-maestro")
-def api_reporte_maestro(
-    local: str = Query("", description="Filtrar por sede (vacío = todas)"),
-    fecha_desde: str = Query(..., description="YYYY-MM-DD"),
-    fecha_hasta: str = Query(..., description="YYYY-MM-DD"),
-    first: int = Query(0, ge=0, description="Índice del primer registro (paginación)"),
-    rows: int = Query(20, ge=1, le=500, description="Registros por página"),
-    filter: str = Query("", description="Filtro global (local, código, canal, cliente)"),
-):
-    """Admin: reporte maestro con órdenes + apelaciones + fotos. Paginación real (first/rows) y filtro opcional."""
+def _build_reporte_rows(
+    local: str = "",
+    fecha_desde: str = "",
+    fecha_hasta: str = "",
+    filter_val: str = "",
+) -> list[dict]:
+    """Construye la lista completa de filas del reporte maestro (sin paginar)."""
     desde = (fecha_desde or "").strip()[:10]
     hasta = (fecha_hasta or "").strip()[:10]
-    if not desde or not hasta:
-        raise HTTPException(status_code=400, detail="fecha_desde y fecha_hasta requeridos (YYYY-MM-DD)")
     locales_data = _locales_list_for_iteration()
     apelaciones = _read_apelaciones()
     apelaciones_by_cod = {(a.get("codigo") or "").strip(): a for a in apelaciones.get("items", []) if (a.get("codigo") or "").strip()}
-    rows_list = []
+    rows_list: list[dict] = []
     for item in locales_data:
         local_id = _locale_id(item) if isinstance(item, dict) else ""
         local_name = _locale_name(item)
@@ -2713,7 +2748,7 @@ def api_reporte_maestro(
                 total_reemb = _total_reembolsado(ap) if ap else 0
                 total_descu = _total_descuentos_sede(ap) if ap else 0
                 perdida_restante = round(max(0, perdida - total_descu), 2) if ap else 0
-                estados_apel = []
+                estados_apel: list[str] = []
                 if ap:
                     monto_dev = float(ap.get("monto_devuelto") or 0)
                     if monto_dev > 0 and total_reemb >= monto_dev:
@@ -2763,19 +2798,234 @@ def api_reporte_maestro(
                 }
                 rows_list.append(r)
     rows_list.sort(key=lambda x: (x.get("fecha") or "", x.get("local") or "", x.get("codigo") or ""))
-    filter_val = (filter or "").strip().lower()
-    if filter_val:
+    fv = (filter_val or "").strip().lower()
+    if fv:
         rows_list = [
-            r
-            for r in rows_list
-            if filter_val in (r.get("local") or "").lower()
-            or filter_val in (r.get("codigo") or "").lower()
-            or filter_val in (r.get("canal") or "").lower()
-            or filter_val in (r.get("cliente") or "").lower()
+            r for r in rows_list
+            if fv in (r.get("local") or "").lower()
+            or fv in (r.get("codigo") or "").lower()
+            or fv in (r.get("canal") or "").lower()
+            or fv in (r.get("cliente") or "").lower()
         ]
+    return rows_list
+
+
+@app.get("/api/reporte-maestro")
+def api_reporte_maestro(
+    local: str = Query("", description="Filtrar por sede (vacío = todas)"),
+    fecha_desde: str = Query(..., description="YYYY-MM-DD"),
+    fecha_hasta: str = Query(..., description="YYYY-MM-DD"),
+    first: int = Query(0, ge=0, description="Índice del primer registro (paginación)"),
+    rows: int = Query(20, ge=1, le=500, description="Registros por página"),
+    filter: str = Query("", description="Filtro global (local, código, canal, cliente)"),
+):
+    """Admin: reporte maestro con órdenes + apelaciones + fotos. Paginación real (first/rows) y filtro opcional."""
+    desde = (fecha_desde or "").strip()[:10]
+    hasta = (fecha_hasta or "").strip()[:10]
+    if not desde or not hasta:
+        raise HTTPException(status_code=400, detail="fecha_desde y fecha_hasta requeridos (YYYY-MM-DD)")
+    rows_list = _build_reporte_rows(local=local, fecha_desde=desde, fecha_hasta=hasta, filter_val=filter)
     total_records = len(rows_list)
-    page = rows_list[first : first + rows]
+    page = rows_list[first: first + rows]
     return {"rows": page, "totalRecords": total_records}
+
+
+@app.get("/api/reporte-maestro/excel")
+def api_reporte_maestro_excel(
+    request: Request,
+    local: str = Query("", description="Filtrar por sede (vacío = todas)"),
+    fecha_desde: str = Query(..., description="YYYY-MM-DD"),
+    fecha_hasta: str = Query(..., description="YYYY-MM-DD"),
+    filter: str = Query("", description="Filtro global"),
+):
+    """
+    Descarga el reporte maestro como Excel: una hoja por sede + hoja TODO.
+    Fotos como vínculos (Foto 1, Foto 2…); si hay más de una foto por grupo
+    se agregan filas extra — esa fila solo lleva el código de referencia y las fotos adicionales.
+    """
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+    from collections import defaultdict
+    import io
+
+    desde = (fecha_desde or "").strip()[:10]
+    hasta = (fecha_hasta or "").strip()[:10]
+    if not desde or not hasta:
+        raise HTTPException(status_code=400, detail="fecha_desde y fecha_hasta requeridos (YYYY-MM-DD)")
+
+    all_rows = _build_reporte_rows(local=local, fecha_desde=desde, fecha_hasta=hasta, filter_val=filter)
+    base_url = str(request.base_url).rstrip("/")
+
+    ESTADO_LABELS: dict[str, str] = {
+        "pendiente_apelar": "Pend. apelar",
+        "apelada": "Apelada",
+        "reembolsada": "Reembolsada",
+        "descuento_confirmado": "Descontado",
+        "sede_decidio_no_apelar": "Sede no apeló",
+    }
+
+    MAX_FOTOS = 2
+
+    # Columnas fijas
+    HEADERS = [
+        "Sede", "Fecha", "Canal", "Código", "Cliente", "Valor pedido",
+        "Foto entrega", "Foto apelación",
+        "Descontado por canal", "Reconocido por canal", "No reconocido",
+        "Estado reembolso", "Descontado a sede", "Pérdida empresa", "Estado apelación",
+    ]
+    # índices 1-based
+    COL_SEDE, COL_FECHA, COL_CANAL, COL_COD, COL_CLI, COL_VALOR = 1, 2, 3, 4, 5, 6
+    COL_FOTO_E, COL_FOTO_A = 7, 8
+    COL_DESC_CANAL, COL_RECON, COL_NO_RECON = 9, 10, 11
+    COL_ESTADO_REIMB, COL_DESC_SEDE, COL_PERD, COL_ESTADO_AP = 12, 13, 14, 15
+    FOTO_COLS = {COL_FOTO_E, COL_FOTO_A}
+    MONEY_COLS = {COL_VALOR, COL_DESC_CANAL, COL_RECON, COL_NO_RECON, COL_DESC_SEDE, COL_PERD}
+
+    def to_abs(p: str) -> str:
+        p = (p or "").strip()
+        return p if p.startswith("http") else base_url + "/" + p.lstrip("/")
+
+    def foto_link(url: str, n: int) -> str:
+        safe = url.replace('"', "%22")
+        return f'=HYPERLINK("{safe}","Foto {n}")'
+
+    def parse_monto(v: object) -> float | None:
+        if v is None:
+            return None
+        try:
+            val = float(str(v).replace(",", "").replace("$", "").replace("\xa0", "").strip() or 0)
+            return val if val != 0 else None
+        except Exception:
+            return None
+
+    def expand_rows(r: dict) -> list[list]:
+        """
+        Devuelve una lista de filas Excel para esta orden.
+        La primera fila tiene todos los datos; las extras solo llevan el código
+        de referencia y las fotos adicionales en su posición correspondiente.
+        """
+        ap = r.get("apelacion") or {}
+        e_urls = [to_abs(p) for p in (r.get("fotos_entrega") or []) if p][:MAX_FOTOS]
+        a_urls = [to_abs(p) for urls in (r.get("fotos_apelacion") or {}).values() for p in (urls or []) if p][:MAX_FOTOS]
+        n_rows = max(1, len(e_urls), len(a_urls))
+
+        estados = r.get("estados_apelacion") or ([r.get("estado_apelacion")] if r.get("estado_apelacion") else [])
+        perdida = r.get("perdida", 0) or 0
+        total_descu = ap.get("total_descuentos_sede") or 0
+        perdida_rest = ap.get("perdida_restante") or 0
+        monto_dev = ap.get("monto_reembolsado") or ap.get("monto_devuelto") or 0
+
+        if ap.get("reembolsado"):
+            estado_reemb = "Reembolsado"
+        elif ap.get("monto_devuelto") is not None and float(ap.get("monto_devuelto") or 0) > 0:
+            estado_reemb = "Pendiente"
+        else:
+            estado_reemb = ""
+
+        result = []
+        for i in range(n_rows):
+            is_first = i == 0
+            row: list = [None] * len(HEADERS)
+
+            # Foto de cada grupo en la posición i (o None si no hay)
+            row[COL_FOTO_E - 1] = foto_link(e_urls[i], i + 1) if i < len(e_urls) else None
+            row[COL_FOTO_A - 1] = foto_link(a_urls[i], i + 1) if i < len(a_urls) else None
+
+            if is_first:
+                row[COL_SEDE  - 1] = r.get("local", "")
+                row[COL_FECHA - 1] = r.get("fecha", "")
+                row[COL_CANAL - 1] = r.get("canal", "")
+                row[COL_COD   - 1] = r.get("codigo", "")
+                row[COL_CLI   - 1] = r.get("cliente", "")
+                row[COL_VALOR - 1] = parse_monto(r.get("monto_pagado"))
+                row[COL_DESC_CANAL  - 1] = parse_monto(ap.get("monto_descontado"))
+                row[COL_RECON       - 1] = parse_monto(monto_dev)
+                row[COL_NO_RECON    - 1] = perdida or None
+                row[COL_ESTADO_REIMB - 1] = estado_reemb or None
+                row[COL_DESC_SEDE   - 1] = parse_monto(total_descu)
+                row[COL_PERD        - 1] = parse_monto(perdida_rest) if perdida > 0 else None
+                row[COL_ESTADO_AP   - 1] = ", ".join(ESTADO_LABELS.get(e, e) for e in estados) if estados else None
+            else:
+                # Fila extra: solo código de referencia + fotos
+                row[COL_COD - 1] = r.get("codigo", "")
+
+            result.append(row)
+        return result
+
+    # Estilos
+    header_fill   = PatternFill("solid", fgColor="1E4D8C")
+    header_font   = Font(bold=True, color="FFFFFF", size=10)
+    header_align  = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    center_align  = Alignment(horizontal="center", vertical="center")
+    top_align     = Alignment(vertical="center")
+    link_font     = Font(color="0563C1", underline="single", size=10)
+    cont_fill     = PatternFill("solid", fgColor="F0F4FA")   # fondo suave filas extra
+    money_fmt     = "#,##0.00"
+    thin          = Side(style="thin", color="D0D0D0")
+    cell_border   = Border(left=thin, right=thin, top=thin, bottom=thin)
+    col_widths    = [24, 12, 16, 26, 22, 14,  16, 16, 16,  18, 18, 16, 14, 14, 14, 24]
+
+    def build_sheet(ws: object, data_rows: list[dict]) -> None:
+        total_cols = len(HEADERS)
+        for c, h in enumerate(HEADERS, 1):
+            cell = ws.cell(row=1, column=c, value=h)
+            cell.font   = header_font
+            cell.fill   = header_fill
+            cell.alignment = header_align
+            cell.border = cell_border
+        ws.auto_filter.ref = f"A1:{get_column_letter(total_cols)}1"
+        ws.freeze_panes = "A2"
+        ws.row_dimensions[1].height = 36
+
+        r_idx = 2
+        for row_data in data_rows:
+            expanded = expand_rows(row_data)
+            for row_offset, cells in enumerate(expanded):
+                is_cont = row_offset > 0
+                for c_idx, val in enumerate(cells, 1):
+                    cell = ws.cell(row=r_idx, column=c_idx, value=val)
+                    cell.border = cell_border
+                    if is_cont:
+                        cell.fill = cont_fill
+                    if c_idx in FOTO_COLS:
+                        if val:
+                            cell.font = link_font
+                        cell.alignment = center_align
+                    elif c_idx in MONEY_COLS and val is not None:
+                        cell.number_format = money_fmt
+                        cell.alignment = top_align
+                    else:
+                        cell.alignment = top_align
+                r_idx += 1
+
+        for i, w in enumerate(col_widths, 1):
+            ws.column_dimensions[get_column_letter(i)].width = w
+
+    wb = Workbook()
+    wb.remove(wb.active)
+
+    by_sede: dict[str, list[dict]] = defaultdict(list)
+    for r in all_rows:
+        by_sede[r.get("local", "Sin sede")].append(r)
+
+    for sede_name in sorted(by_sede.keys()):
+        safe = sede_name[:31].translate(str.maketrans("/\\*?[]:", "-------"))
+        ws = wb.create_sheet(title=safe)
+        build_sheet(ws, by_sede[sede_name])
+
+    ws_todo = wb.create_sheet(title="TODO")
+    build_sheet(ws_todo, all_rows)
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    filename = f"reporte_maestro_{desde}_{hasta}.xlsx"
+    return Response(
+        content=buf.read(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @app.get("/api/orders/{codigo:path}/fotos")

@@ -17,13 +17,13 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      '/api': { target: 'http://localhost:8000', changeOrigin: true },
-      '/report': { target: 'http://localhost:8000', changeOrigin: true, ws: true },
-      '/credentials': { target: 'http://localhost:8000', changeOrigin: true, ws: true },
-      '/login': { target: 'http://localhost:8000', changeOrigin: true },
-      '/cookies': { target: 'http://localhost:8000', changeOrigin: true },
-      '/token': { target: 'http://localhost:8000', changeOrigin: true },
-      '/didi': { target: 'http://localhost:8000', changeOrigin: true },
+      '/api': { target: 'http://localhost:9400', changeOrigin: true },
+      '/report': { target: 'http://localhost:9400', changeOrigin: true, ws: true },
+      '/credentials': { target: 'http://localhost:9400', changeOrigin: true, ws: true },
+      '/login': { target: 'http://localhost:9400', changeOrigin: true },
+      '/cookies': { target: 'http://localhost:9400', changeOrigin: true },
+      '/token': { target: 'http://localhost:9400', changeOrigin: true },
+      '/didi': { target: 'http://localhost:9400', changeOrigin: true },
     },
   },
 })

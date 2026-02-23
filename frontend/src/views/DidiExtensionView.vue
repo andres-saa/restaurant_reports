@@ -31,10 +31,10 @@ function getDidiSedesWsUrl(): string {
       const base = path && path !== '/' ? path : ''
       return `${wsProtocol}//${u.host}${base}/didi/sedes/ws`
     } catch {
-      return `${protocol}//${location.hostname}:8000/didi/sedes/ws`
+      return `${protocol}//${location.hostname}:9400/didi/sedes/ws`
     }
   }
-  return `${protocol}//${location.hostname}:8000/didi/sedes/ws`
+  return `${protocol}//${location.hostname}:9400/didi/sedes/ws`
 }
 
 function connectWs() {

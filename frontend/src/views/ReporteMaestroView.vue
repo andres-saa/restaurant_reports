@@ -10,6 +10,7 @@ import Tag from 'primevue/tag'
 import Message from 'primevue/message'
 import ProgressSpinner from 'primevue/progressspinner'
 import Dialog from 'primevue/dialog'
+import PhotoLightbox from '@/components/PhotoLightbox.vue'
 import Timeline from 'primevue/timeline'
 
 const API = import.meta.env.VITE_API_URL ?? ''
@@ -126,6 +127,37 @@ function allFotosRespuestas(row: ReporteRow): string[] {
 function allFotosApelacion(row: ReporteRow): string[] {
   const ap = row.fotos_apelacion || {}
   return Object.values(ap).flat()
+}
+
+const exportingExcel = ref(false)
+const exportError = ref('')
+
+async function exportExcel() {
+  if (!fechaDesde.value || !fechaHasta.value) return
+  exportingExcel.value = true
+  exportError.value = ''
+  try {
+    const params = new URLSearchParams()
+    if (selectedLocal.value) params.set('local', selectedLocal.value)
+    params.set('fecha_desde', fechaDesde.value)
+    params.set('fecha_hasta', fechaHasta.value)
+    if (globalFilter.value.trim()) params.set('filter', globalFilter.value.trim())
+    const r = await fetch(`${API}/api/reporte-maestro/excel?${params.toString()}`)
+    if (!r.ok) throw new Error(`Error ${r.status}`)
+    const blob = await r.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    const cd = r.headers.get('content-disposition') || ''
+    const match = cd.match(/filename="?([^"]+)"?/)
+    a.download = match ? match[1] : `reporte_maestro_${fechaDesde.value}_${fechaHasta.value}.xlsx`
+    a.click()
+    URL.revokeObjectURL(url)
+  } catch (e) {
+    exportError.value = (e as Error).message
+  } finally {
+    exportingExcel.value = false
+  }
 }
 
 async function load(pageFirst?: number, pageRows?: number) {
@@ -294,7 +326,16 @@ const historialEvents = computed(() => buildHistorialEvents(historialRow.value))
             <DatePicker v-model="fechaHastaAsDate" :minDate="MIN_DATE" dateFormat="dd/mm/yy" showIcon />
           </div>
           <Button label="Cargar" icon="pi pi-refresh" :loading="loading" @click="() => load()" />
+          <Button
+            label="Exportar Excel"
+            icon="pi pi-file-excel"
+            severity="success"
+            :loading="exportingExcel"
+            :disabled="!fechaDesde || !fechaHasta"
+            @click="exportExcel"
+          />
         </div>
+        <Message v-if="exportError" severity="error" class="mt-2" @close="exportError = ''">{{ exportError }}</Message>
         <div class="mt-2">
           <input
             v-model="globalFilter"
@@ -462,16 +503,11 @@ const historialEvents = computed(() => buildHistorialEvents(historialRow.value))
       </template>
     </Card>
 
-    <Dialog v-model:visible="photoModalVisible" modal header="Foto" class="photo-dialog" @hide="closePhoto">
-      <template #default>
-        <div v-if="photoModalUrl" class="photo-modal-body">
-          <img :src="fullPhotoUrl(photoModalUrl)" alt="Foto" class="photo-modal-img" />
-        </div>
-      </template>
-      <template #footer>
-        <Button label="Cerrar" icon="pi pi-times" @click="closePhoto" />
-      </template>
-    </Dialog>
+    <PhotoLightbox
+      :src="photoModalUrl ? fullPhotoUrl(photoModalUrl) : null"
+      :visible="photoModalVisible"
+      @close="closePhoto"
+    />
 
     <Dialog
       v-model:visible="historialVisible"
@@ -537,16 +573,6 @@ const historialEvents = computed(() => buildHistorialEvents(historialRow.value))
   width: 100%;
   height: 100%;
   object-fit: cover;
-}
-.photo-modal-body {
-  display: flex;
-  justify-content: center;
-  min-height: 40vh;
-}
-.photo-modal-img {
-  max-width: 100%;
-  max-height: 70vh;
-  object-fit: contain;
 }
 .text-red {
   color: var(--p-red-600, #dc2626);

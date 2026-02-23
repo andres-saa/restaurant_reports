@@ -17,6 +17,7 @@ import TabPanel from 'primevue/tabpanel'
 import Divider from 'primevue/divider'
 import ProgressSpinner from 'primevue/progressspinner'
 import Dialog from 'primevue/dialog'
+import PhotoLightbox from '@/components/PhotoLightbox.vue'
 
 const API = import.meta.env.VITE_API_URL ?? ''
 
@@ -215,11 +216,11 @@ function getReportWsUrl(): string {
       const base = path && path !== '/' ? path : ''
       return `${wsProtocol}//${u.host}${base}/report/ws`
     } catch {
-      return `${protocol}//${location.hostname}:8000/report/ws`
+      return `${protocol}//${location.hostname}:9400/report/ws`
     }
   }
-  // Dev sin VITE_API_URL: asumir backend en puerto 8000
-  return `${protocol}//${location.hostname}:8000/report/ws`
+  // Dev sin VITE_API_URL: asumir backend en puerto 9400
+  return `${protocol}//${location.hostname}:9400/report/ws`
 }
 
 function connectReportWs() {
@@ -715,6 +716,33 @@ async function confirmUploadPlanilla() {
   }
 }
 
+const IMAGE_EXTS = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'heif', 'bmp', 'svg'])
+
+function isPlanillaImage(nombre: string): boolean {
+  const ext = nombre.split('.').pop()?.toLowerCase() ?? ''
+  return IMAGE_EXTS.has(ext)
+}
+
+function planillaArchivoUrl(nombre: string): string {
+  return `${API}/api/planilla/${encodeURIComponent(currentSedeId.value)}/${selectedDate.value}/archivo/${encodeURIComponent(nombre)}`
+}
+
+function openPlanillaImage(nombre: string) {
+  openPhotoModal(planillaArchivoUrl(nombre))
+}
+
+function confirmDeletePlanillaArchivo(nombre: string) {
+  confirm.require({
+    message: `¿Eliminar el archivo "${nombre}"? Esta acción no se puede deshacer.`,
+    header: 'Confirmar eliminación',
+    icon: 'pi pi-exclamation-triangle',
+    rejectLabel: 'Cancelar',
+    acceptLabel: 'Eliminar',
+    acceptClass: 'p-button-danger',
+    accept: () => deletePlanillaArchivo(nombre),
+  })
+}
+
 async function deletePlanillaArchivo(nombre: string) {
   if (!currentSedeId.value || !selectedDate.value) return
   await fetch(
@@ -946,14 +974,26 @@ function canalLogoUrl(canal: string | undefined): string | null {
           </div>
           <ul class="planilla-archivos-list">
             <li v-for="archivo in planilla.archivos" :key="archivo.nombre" class="planilla-archivo-item">
+              <!-- Miniatura si es imagen -->
+              <button
+                v-if="isPlanillaImage(archivo.nombre)"
+                type="button"
+                class="planilla-img-thumb"
+                :title="`Ver ${archivo.nombre}`"
+                @click="openPlanillaImage(archivo.nombre)"
+              >
+                <img :src="planillaArchivoUrl(archivo.nombre)" :alt="archivo.nombre" />
+                <span class="planilla-img-zoom"><i class="pi pi-search-plus" /></span>
+              </button>
+
               <span class="text-sm text-color-secondary planilla-archivo-info">
-                <i class="pi pi-file mr-1"></i>{{ archivo.nombre }}
+                <i :class="isPlanillaImage(archivo.nombre) ? 'pi pi-image' : 'pi pi-file'" class="mr-1" />{{ archivo.nombre }}
                 <span v-if="archivo.tamanio"> · {{ formatFileSize(archivo.tamanio) }}</span>
                 <span v-if="archivo.fecha_subida"> · {{ formatTimestamp(archivo.fecha_subida) }}</span>
               </span>
               <div class="flex gap-1 flex-shrink-0">
                 <a
-                  :href="`${API}/api/planilla/${encodeURIComponent(currentSedeId)}/${selectedDate}/archivo/${encodeURIComponent(archivo.nombre)}`"
+                  :href="planillaArchivoUrl(archivo.nombre)"
                   target="_blank"
                   rel="noopener noreferrer"
                   class="p-button p-button-secondary p-button-sm btn-touch planilla-archivo-btn"
@@ -967,7 +1007,7 @@ function canalLogoUrl(canal: string | undefined): string | null {
                   size="small"
                   text
                   class="btn-touch planilla-archivo-btn"
-                  @click="deletePlanillaArchivo(archivo.nombre)"
+                  @click="confirmDeletePlanillaArchivo(archivo.nombre)"
                 />
               </div>
             </li>
@@ -1297,23 +1337,11 @@ function canalLogoUrl(canal: string | undefined): string | null {
       </div>
     </div>
 
-    <Dialog
-      v-model:visible="photoModalVisible"
-      modal
-      header="Foto"
-      class="photo-dialog"
-      content-class="photo-modal-content"
-      @hide="closePhotoModal"
-    >
-      <template #default>
-        <div v-if="photoModalUrl" class="photo-modal-body">
-          <img :src="fullPhotoUrl(photoModalUrl)" alt="Foto" class="photo-modal-img" />
-        </div>
-      </template>
-      <template #footer>
-        <Button label="Cerrar" icon="pi pi-times" class="btn-touch" @click="closePhotoModal" />
-      </template>
-    </Dialog>
+    <PhotoLightbox
+      :src="photoModalUrl ? fullPhotoUrl(photoModalUrl) : null"
+      :visible="photoModalVisible"
+      @close="closePhotoModal"
+    />
 
     <Dialog
       v-model:visible="uploadModalVisible"
@@ -1573,25 +1601,6 @@ function canalLogoUrl(canal: string | undefined): string | null {
   height: 100%;
   object-fit: cover;
   display: block;
-}
-.photo-modal-content {
-  padding: 0;
-  overflow: hidden;
-}
-.photo-modal-body {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  min-height: 60vh;
-  max-height: 75vh;
-  background: var(--p-content-background);
-}
-.photo-modal-img {
-  max-width: 100%;
-  max-height: 75vh;
-  width: auto;
-  height: auto;
-  object-fit: contain;
 }
 .upload-dialog :deep(.p-dialog) {
   max-width: min(420px, 95vw);
@@ -1862,27 +1871,6 @@ function canalLogoUrl(canal: string | undefined): string | null {
     flex: 1;
     min-height: 48px;
   }
-  .photo-dialog :deep(.p-dialog) {
-    width: 100vw !important;
-    max-width: 100vw !important;
-    height: 100%;
-    max-height: 100dvh;
-    margin: 0;
-    border-radius: 0;
-  }
-  .photo-dialog :deep(.p-dialog-content) {
-    flex: 1;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0;
-  }
-  .photo-dialog :deep(.p-dialog-footer) {
-    padding-bottom: max(1rem, env(safe-area-inset-bottom));
-  }
-  .photo-dialog :deep(.p-dialog-footer .p-button) {
-    min-height: 48px;
-  }
 }
 
 @media (min-width: 768px) {
@@ -1938,11 +1926,15 @@ function canalLogoUrl(canal: string | undefined): string | null {
 }
 .planilla-archivos-list {
   list-style: none;
-  padding: 0;
+  padding: 0 0.25rem 0 0;
   margin: 0.5rem 0 0;
   display: flex;
   flex-direction: column;
   gap: 0.3rem;
+  max-height: 260px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--p-content-border-color) transparent;
 }
 .planilla-archivo-item {
   display: flex;
@@ -1958,6 +1950,43 @@ function canalLogoUrl(canal: string | undefined): string | null {
 .planilla-archivo-btn {
   padding: 0.25rem 0.5rem !important;
   min-width: 0 !important;
+}
+.planilla-img-thumb {
+  position: relative;
+  flex-shrink: 0;
+  width: 52px;
+  height: 52px;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid var(--p-content-border-color);
+  cursor: pointer;
+  background: var(--p-content-surface-100);
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.planilla-img-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.planilla-img-zoom {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 1.1rem;
+  opacity: 0;
+  transition: background 0.15s, opacity 0.15s;
+}
+.planilla-img-thumb:hover .planilla-img-zoom {
+  background: rgba(0, 0, 0, 0.45);
+  opacity: 1;
 }
 .planilla-selected-list {
   list-style: none;

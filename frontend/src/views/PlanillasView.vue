@@ -7,6 +7,7 @@ import ProgressSpinner from 'primevue/progressspinner'
 import Message from 'primevue/message'
 import InputText from 'primevue/inputtext'
 import Badge from 'primevue/badge'
+import PhotoLightbox from '@/components/PhotoLightbox.vue'
 
 const API = import.meta.env.VITE_API_URL ?? ''
 
@@ -90,6 +91,25 @@ function formatTimestamp(ts: number | null): string {
 
 function downloadUrl(sede: SedePlanilla, archivo: PlanillaArchivo): string {
   return `${API}/api/planilla/${encodeURIComponent(sede.local_id)}/${selectedDate.value}/archivo/${encodeURIComponent(archivo.nombre)}`
+}
+
+const IMAGE_EXTS = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'heif', 'bmp', 'svg'])
+
+function isImage(nombre: string): boolean {
+  return IMAGE_EXTS.has(nombre.split('.').pop()?.toLowerCase() ?? '')
+}
+
+const lightboxVisible = ref(false)
+const lightboxSrc = ref<string | null>(null)
+
+function openLightbox(url: string) {
+  lightboxSrc.value = url
+  lightboxVisible.value = true
+}
+
+function closeLightbox() {
+  lightboxVisible.value = false
+  lightboxSrc.value = null
 }
 
 onMounted(load)
@@ -194,8 +214,20 @@ onMounted(load)
                 :key="archivo.nombre"
                 class="archivo-item"
               >
+                <!-- Miniatura si es imagen -->
+                <button
+                  v-if="isImage(archivo.nombre)"
+                  type="button"
+                  class="archivo-img-thumb"
+                  :title="`Ver ${archivo.nombre}`"
+                  @click="openLightbox(downloadUrl(sede, archivo))"
+                >
+                  <img :src="downloadUrl(sede, archivo)" :alt="archivo.nombre" />
+                  <span class="archivo-img-zoom"><i class="pi pi-search-plus" /></span>
+                </button>
+
                 <span class="archivo-info text-sm text-color-secondary">
-                  <i class="pi pi-file mr-1"></i>{{ archivo.nombre }}
+                  <i :class="isImage(archivo.nombre) ? 'pi pi-image' : 'pi pi-file'" class="mr-1" />{{ archivo.nombre }}
                   <span v-if="archivo.tamanio"> · {{ formatFileSize(archivo.tamanio) }}</span>
                   <span v-if="archivo.fecha_subida"> · {{ formatTimestamp(archivo.fecha_subida) }}</span>
                 </span>
@@ -218,6 +250,8 @@ onMounted(load)
       <ProgressSpinner style="width:32px;height:32px" stroke-width="4" />
       <span class="text-color-secondary">Cargando...</span>
     </div>
+
+    <PhotoLightbox :src="lightboxSrc" :visible="lightboxVisible" @close="closeLightbox" />
   </div>
 </template>
 
@@ -322,11 +356,15 @@ onMounted(load)
 
 .archivos-list {
   list-style: none;
-  padding: 0;
+  padding: 0 0.25rem 0 0;
   margin: 0.25rem 0 0 1.4rem;
   display: flex;
   flex-direction: column;
   gap: 0.3rem;
+  max-height: 260px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--p-content-border-color) transparent;
 }
 .archivo-item {
   display: flex;
@@ -349,6 +387,43 @@ onMounted(load)
 }
 .download-link:hover {
   text-decoration: underline;
+}
+.archivo-img-thumb {
+  position: relative;
+  flex-shrink: 0;
+  width: 52px;
+  height: 52px;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid var(--p-content-border-color);
+  cursor: pointer;
+  background: var(--p-content-surface-100);
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.archivo-img-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.archivo-img-zoom {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 1.1rem;
+  opacity: 0;
+  transition: background 0.15s, opacity 0.15s;
+}
+.archivo-img-thumb:hover .archivo-img-zoom {
+  background: rgba(0, 0, 0, 0.45);
+  opacity: 1;
 }
 
 @media (max-width: 767px) {

@@ -11,6 +11,7 @@ import InputNumber from 'primevue/inputnumber'
 import Message from 'primevue/message'
 import ProgressSpinner from 'primevue/progressspinner'
 import Dialog from 'primevue/dialog'
+import PhotoLightbox from '@/components/PhotoLightbox.vue'
 
 const API = import.meta.env.VITE_API_URL ?? ''
 
@@ -478,22 +479,11 @@ function closePhotoModal() {
       </template>
     </Dialog>
 
-    <Dialog
-      v-model:visible="photoModalVisible"
-      modal
-      header="Foto de entrega"
-      class="photo-dialog"
-      @hide="closePhotoModal"
-    >
-      <template #default>
-        <div v-if="photoModalUrl" class="photo-modal-body">
-          <img :src="fullPhotoUrl(photoModalUrl)" alt="Foto" class="photo-modal-img" />
-        </div>
-      </template>
-      <template #footer>
-        <Button label="Cerrar" icon="pi pi-times" @click="closePhotoModal" />
-      </template>
-    </Dialog>
+    <PhotoLightbox
+      :src="photoModalUrl ? fullPhotoUrl(photoModalUrl) : null"
+      :visible="photoModalVisible"
+      @close="closePhotoModal"
+    />
   </div>
 </template>
 
@@ -527,15 +517,5 @@ function closePhotoModal() {
   width: 100%;
   height: 100%;
   object-fit: cover;
-}
-.photo-modal-body {
-  display: flex;
-  justify-content: center;
-  min-height: 40vh;
-}
-.photo-modal-img {
-  max-width: 100%;
-  max-height: 70vh;
-  object-fit: contain;
 }
 </style>
