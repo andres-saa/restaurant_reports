@@ -1,0 +1,7 @@
+{
+  "_comment": "Blacklist de IDs excluidos de todas las vistas. Rename para mostrar nombres distintos al original.",
+  "blacklist_ids": ["12", "14", "15", "16", "17"],
+  "rename": {
+    "13": "SM Cedritos"
+  }
+}

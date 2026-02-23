@@ -410,7 +410,7 @@ function closePhotoModal() {
         </p>
       </template>
       <template #footer>
-        <Button label="Cancelar" severity="secondary" :disabled="noApelarLoading" @click="closeNoApelarDialog" />
+        <Button label="Cancelar" icon="pi pi-times" severity="secondary" :disabled="noApelarLoading" @click="closeNoApelarDialog" />
         <Button label="Sí, no apelar" icon="pi pi-check" :loading="noApelarLoading" @click="confirmNoApelar" />
       </template>
     </Dialog>
@@ -467,7 +467,7 @@ function closePhotoModal() {
         </div>
       </template>
       <template #footer>
-        <Button label="Cancelar" severity="secondary" :disabled="apelarLoading" @click="closeApelarDialog" />
+        <Button label="Cancelar" icon="pi pi-times" severity="secondary" :disabled="apelarLoading" @click="closeApelarDialog" />
         <Button
           label="Enviar apelación"
           icon="pi pi-check"

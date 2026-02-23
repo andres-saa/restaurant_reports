@@ -11,6 +11,9 @@ import ReporteMaestroView from '@/views/ReporteMaestroView.vue'
 import InformesView from '@/views/InformesView.vue'
 import CredentialsView from '@/views/CredentialsView.vue'
 import LinksSedesView from '@/views/LinksSedesView.vue'
+import DidiExtensionView from '@/views/DidiExtensionView.vue'
+import ExtensionesView from '@/views/ExtensionesView.vue'
+import PlanillasView from '@/views/PlanillasView.vue'
 import NotFoundView from '@/views/NotFoundView.vue'
 import { useRoleStore } from '@/stores/role'
 import type { Role } from '@/stores/role'
@@ -37,6 +40,12 @@ const router = createRouter({
       name: 'reportes',
       component: OrdersView,
       meta: { uploadOnly: false, reportesCajero: true, role: 'user' as Role },
+    },
+    {
+      path: '/pedidos/extensiones',
+      name: 'extensiones',
+      component: ExtensionesView,
+      meta: { role: 'user' as Role },
     },
     {
       path: '/pedidos/apelar',
@@ -97,6 +106,18 @@ const router = createRouter({
       path: '/pedidos/links-sedes',
       name: 'links-sedes',
       component: LinksSedesView,
+      meta: { role: 'admin' as Role },
+    },
+    {
+      path: '/pedidos/extension-didi',
+      name: 'extension-didi',
+      component: DidiExtensionView,
+      meta: { role: 'admin' as Role },
+    },
+    {
+      path: '/pedidos/planillas',
+      name: 'planillas',
+      component: PlanillasView,
       meta: { role: 'admin' as Role },
     },
     {

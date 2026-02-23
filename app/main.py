@@ -9,6 +9,7 @@ import json
 import logging
 import queue
 import re
+import shutil
 import sys
 import traceback
 from pathlib import Path
@@ -31,12 +32,12 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, File, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
@@ -54,27 +55,20 @@ from app.config import (
     REPORTS_CANALES_DELIVERY_JSON,
     DELIVERY_API_BASE,
     DELIVERYS_CACHE_DIR,
+    REPORTS_RESTAURANT_MAPS_DIR,
+    REPORTS_DIDI_MAPS_DIR,
     UPLOADS_DIR,
     NO_ENTREGADAS_JSON,
     APELACIONES_JSON,
     HORARIOS_JSON,
-    DIDI_LOGIN_URL,
-    DIDI_CREDENTIALS_FILE,
-    DIDI_COOKIES_FILE,
-    DIDI_STORE_URL,
-    DIDI_SHOPS_URL,
-    DIDI_SHOPS_JSON,
-    DIDI_NEW_ORDERS_JSON,
-    DIDI_DAILY_ORDERS_JSON,
-    DIDI_BLACKLIST_FILE,
-    DIDI_MANAGER_ORDER_URL,
-    DIDI_STORE_ORDER_HISTORY_URL,
-    DIDI_ORDER_LIST_JSON,
-    DIDI_SYSTEM_MAP_JSON,
+    PLANILLAS_DIR,
+    LOCALES_CONFIG_JSON,
 )
-
+from app.router import router as didi_capture_router, run_didi_sedes_prune_loop
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Carpeta para mapas orderId -> displayNum del capturador Didi (POST /didi/daily-orders-payload)
+    app.state.didi_capture_maps_dir = REPORTS_DIR / "didi_maps"
     # Ya no se usa el reporte Excel automático; datos desde API deliverys cada 5 min
     # Locales desde API cada 10 min; primera carga al arranque
     locales_task = asyncio.create_task(_locales_scheduler_loop())
@@ -91,15 +85,16 @@ async def lifespan(app: FastAPI):
     # Login cada 12 h para renovar sesión
     login_refresh_task = asyncio.create_task(_login_refresh_loop())
     logger.info("Login refresh: iniciado (cada 12 h)")
-    # Didi: captura daily-orders cada 5 min (solo en horario de apertura) y aplica reemplazos
-    didi_daily_task = asyncio.create_task(_didi_daily_orders_scheduler_loop())
-    logger.info("Didi daily-orders: iniciado (cada 5 min, respetando horario de apertura)")
-    asyncio.create_task(_run_didi_daily_orders_once())  # ejecutar una vez al arranque (si en horario)
+    # Sedes Didi: poda cada 5 s para marcar extensiones desconectadas (>36 s sin heartbeat)
+    didi_sedes_task = asyncio.create_task(run_didi_sedes_prune_loop())
+    logger.info("Didi sedes prune: iniciado (cada 5 s)")
+    # Callback para merge cuando la extensión actualiza didi_restaurant_map (sin temporizador)
+    app.state.on_didi_map_updated = _on_didi_map_updated
     yield
     locales_task.cancel()
     deliverys_task.cancel()
     login_refresh_task.cancel()
-    didi_daily_task.cancel()
+    didi_sedes_task.cancel()
     try:
         await locales_task
     except asyncio.CancelledError:
@@ -113,7 +108,7 @@ async def lifespan(app: FastAPI):
     except asyncio.CancelledError:
         pass
     try:
-        await didi_daily_task
+        await didi_sedes_task
     except asyncio.CancelledError:
         pass
 
@@ -128,16 +123,18 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:5173",
         "http://127.0.0.1:5173",
+        "http://localhost:5174",
+        "http://127.0.0.1:5174",
         "https://fotopedidos.salchimonster.com",
         "http://fotopedidos.salchimonster.com",
-        "null",  # extensión de navegador (Didi Capture)
+        "null",
     ],
     allow_origin_regex=r"chrome-extension://[a-zA-Z0-9]+",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
+app.include_router(didi_capture_router, tags=["didi-capture"])
 
 # --- Credenciales ---
 
@@ -178,35 +175,6 @@ def save_cookies(cookies: list[dict]) -> None:
     _write_json(COOKIES_FILE, cookies)
 
 
-def get_didi_credentials() -> dict[str, Any]:
-    """Credenciales Didi (email + password). Por defecto admon.salchimonster@gmail.com / Didi2024."""
-    data = _read_json(DIDI_CREDENTIALS_FILE, {})
-    if data:
-        return data
-    return {"email": "admon.salchimonster@gmail.com", "password": "Didi2024"}
-
-
-def save_didi_credentials(data: dict[str, Any]) -> None:
-    DIDI_CREDENTIALS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    _write_json(DIDI_CREDENTIALS_FILE, data)
-
-
-def get_didi_cookies() -> list[dict]:
-    return _read_json(DIDI_COOKIES_FILE, [])
-
-
-def save_didi_cookies(cookies: list[dict]) -> None:
-    DIDI_COOKIES_FILE.parent.mkdir(parents=True, exist_ok=True)
-    _write_json(DIDI_COOKIES_FILE, cookies)
-
-
-def get_didi_blacklist() -> set[str]:
-    """Devuelve shopId a excluir (sedes que no son Salchimonster)."""
-    data = _read_json(DIDI_BLACKLIST_FILE, {})
-    ids = data.get("shop_ids") if isinstance(data, dict) else []
-    return set(str(x) for x in ids) if ids else set()
-
-
 def get_token() -> str | None:
     """Devuelve el token guardado (data.token del login) o None."""
     data = _read_json(TOKEN_FILE, {})
@@ -234,17 +202,6 @@ class CredentialsUpdate(BaseModel):
     turno_id: str | None = None
     caja_id: str | None = None
     app: str | None = None
-
-
-class DidiCredentialsUpdate(BaseModel):
-    email: str | None = None
-    password: str | None = None
-
-
-class DidiCaptureBody(BaseModel):
-    """Body de POST /didi/capture (extensión del navegador)."""
-    type: str  # "getShops" | "newOrders"
-    data: dict | None = None
 
 
 def _clean_server_error_message(raw: str) -> str:
@@ -732,802 +689,38 @@ def _do_login_sync() -> dict:
     }
 
 
-def _do_didi_login_sync() -> dict:
-    """Login a Didi Food por navegador: correo + contraseña en page.didiglobal.com. Guarda cookies en didi_cookies.json."""
-    try:
-        from playwright.sync_api import sync_playwright
-    except ImportError as e:
-        logger.error("Playwright no instalado: %s", e)
-        return {
-            "_is_error": True,
-            "success": False,
-            "message": "Playwright no instalado. pip install playwright && playwright install chromium",
-            "saved_cookies": 0,
-        }
-
-    cred = get_didi_credentials()
-    email = (cred.get("email") or "").strip()
-    password = (cred.get("password") or "").strip()
-    if not email or not password:
-        return {
-            "_is_error": True,
-            "success": False,
-            "message": "Faltan email o contraseña en didi_credentials.json",
-            "saved_cookies": 0,
-        }
-
-    logger.info("Didi login: inicio (email=%s)", email[:20] + "..." if len(email) > 20 else email)
-    try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            context = browser.new_context(
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                ignore_https_errors=True,
-            )
-            existing = get_didi_cookies()
-            if existing:
-                context.add_cookies(existing)
-
-            page = context.new_page()
-            page.goto(DIDI_LOGIN_URL, wait_until="load", timeout=45000)
-            page.wait_for_timeout(4000)  # SPA Vue: esperar nav-tab y formulario inicial
-
-            # Paso 1: La página inicia con "Ingresar con contraseña" (teléfono). Debemos clicar
-            # "Iniciar sesión con el correo electrónico" para que aparezca el formulario email/password.
-            tab_email_texts = ("Iniciar sesión con el correo electrónico", "Sign in with email", "correo electrónico")
-            tab_clicked = False
-            for tab_text in tab_email_texts:
-                try:
-                    tab = page.get_by_text(tab_text, exact=True).first
-                    tab.wait_for(state="visible", timeout=5000)
-                    tab.click()
-                    tab_clicked = True
-                    logger.info("Didi: clic en tab '%s'", tab_text[:40])
-                    break
-                except Exception:
-                    try:
-                        tab = page.locator("li.nav-tab li", has_text=tab_text).first
-                        tab.wait_for(state="visible", timeout=3000)
-                        tab.click()
-                        tab_clicked = True
-                        logger.info("Didi: clic en tab li '%s'", tab_text[:40])
-                        break
-                    except Exception:
-                        continue
-            if not tab_clicked:
-                try:
-                    # Fallback: clic en la tercera pestaña (correo electrónico) por índice
-                    page.locator(".nav-tab li").nth(2).click()
-                    tab_clicked = True
-                    logger.info("Didi: clic en tab por índice 2")
-                except Exception:
-                    pass
-            if not tab_clicked:
-                logger.warning("Didi: no se encontró tab correo electrónico, continuando...")
-            page.wait_for_timeout(2000)  # Esperar a que Vue muestre el formulario email
-
-            # Paso 2: Campos email y password (solo visibles tras clicar la tab correo)
-            email_selectors = [
-                'input[placeholder="Ingresa tu correo electrónico"]',
-                'input[placeholder*="correo"]',
-                'input[placeholder*="Ingresa tu correo"]',
-                'input[placeholder*="email"]',
-                'input[placeholder*="Email"]',
-                ".input-email input[type='text']",
-                ".email-login-form input[type='text']",
-            ]
-            pwd_selectors = [
-                'input[placeholder="Ingresa tu contraseña"]',
-                'input[placeholder*="contraseña"]',
-                'input[placeholder*="password"]',
-                'input[placeholder*="Password"]',
-                ".input-pwd input[type='password']",
-                ".email-login-form input[type='password']",
-            ]
-            email_loc = page.locator(", ".join(email_selectors)).first
-            pwd_loc = page.locator(", ".join(pwd_selectors)).first
-            email_loc.wait_for(state="visible", timeout=15000)
-            email_loc.fill(email)
-            page.wait_for_timeout(400)
-            pwd_loc.fill(password)
-            page.wait_for_timeout(500)
-
-            # Botón "Iniciar sesión" / "Sign in" / "Log in" (es un div con clase button)
-            btn = page.locator("div.button.actived").filter(
-                has=page.locator("text=/Iniciar sesión|Sign in|Log in/i")
-            ).first
-            btn.click()
-
-            # Esperar redirección (Didi puede tardar o usar SPA; no depender de expect_navigation)
-            current_url = page.url
-            for _ in range(30):  # hasta 30 s
-                page.wait_for_timeout(1000)
-                current_url = page.url
-                if "didi-food.com" in current_url or "setCookieV2" in current_url:
-                    logger.info("Didi: redirección detectada a %s", current_url[:60])
-                    break
-                if "page.didiglobal.com" not in current_url:
-                    break  # ya salió del login
-
-            # Navegar a la store para establecer sesión completa en b.didi-food.com
-            # (la cookie "ticket" y el wsgsig se asocian ahí; sin esto, newOrders devuelve session expired)
-            if "didi-food.com" in current_url or "setCookieV2" in current_url:
-                try:
-                    page.goto(DIDI_STORE_URL, wait_until="domcontentloaded", timeout=20000)
-                    page.wait_for_timeout(5000)  # esperar que carguen APIs (newOrders, etc.)
-                except Exception as nav_err:
-                    logger.warning("Didi: navegación a store: %s", nav_err)
-
-            cookies = context.cookies()
-            save_didi_cookies(cookies)
-            browser.close()
-
-            success = "didi-food.com" in current_url or "setCookieV2" in current_url or "didi" in current_url.lower()
-            logger.info("Didi login: url final=%s, cookies=%s", current_url[:80], len(cookies))
-            return {
-                "_is_error": False,
-                "success": success,
-                "message": "Login Didi realizado" if success else "Comprueba si la sesión se abrió correctamente.",
-                "saved_cookies": len(cookies),
-                "final_url": current_url[:200],
-            }
-    except Exception as e:
-        logger.exception("Didi login: %s", e)
-        return {
-            "_is_error": True,
-            "success": False,
-            "message": f"{type(e).__name__}: {e}",
-            "saved_cookies": 0,
-        }
+@app.get("/cookies")
+def read_cookies():
+    """Lista si hay cookies guardadas (no expone valores sensibles)."""
+    cookies = get_cookies()
+    return {
+        "count": len(cookies),
+        "names": [c.get("name") for c in cookies],
+    }
 
 
-def _fetch_didi_new_orders_sync() -> dict:
-    """
-    Obtiene newOrders de Didi usando Playwright con las cookies guardadas.
-    El navegador carga la store, hace la petición real (con wsgsig correcto) y devuelve la respuesta.
-    Evita 'session expired' porque usa la misma sesión que un usuario real.
-    """
-    try:
-        from playwright.sync_api import sync_playwright
-    except ImportError as e:
-        logger.error("Playwright no instalado: %s", e)
-        return {"_is_error": True, "success": False, "message": str(e), "data": None}
-
-    cookies = get_didi_cookies()
-    if not cookies:
-        return {
-            "_is_error": True,
-            "success": False,
-            "message": "No hay cookies Didi. Ejecuta POST /didi/login primero.",
-            "data": None,
-        }
-
-    try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            context = browser.new_context(
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
-                ignore_https_errors=True,
-            )
-            context.add_cookies(cookies)
-
-            page = context.new_page()
-            new_orders_response: list[dict] = []
-
-            def on_response(resp):
-                url = resp.url or ""
-                if "newOrders" in url and resp.request.resource_type == "xhr":
-                    try:
-                        body = resp.json()
-                        new_orders_response.append(body)
-                    except Exception:
-                        pass
-
-            page.on("response", on_response)
-            page.goto(DIDI_STORE_URL, wait_until="domcontentloaded", timeout=30000)
-            page.wait_for_timeout(3000)
-
-            browser.close()
-
-            if new_orders_response:
-                data = new_orders_response[-1]
-                errno = data.get("errno", 0)
-                success = errno == 0
-                return {
-                    "_is_error": False,
-                    "success": success,
-                    "message": data.get("errmsg") if not success else "OK",
-                    "data": data,
-                }
-            return {
-                "_is_error": True,
-                "success": False,
-                "message": "No se capturó respuesta newOrders (¿sesión expirada?)",
-                "data": None,
-            }
-    except Exception as e:
-        logger.exception("Didi newOrders: %s", e)
-        return {"_is_error": True, "success": False, "message": str(e), "data": None}
+@app.post("/cookies/clear")
+def clear_cookies():
+    """Borra las cookies guardadas (útil para forzar nuevo login)."""
+    save_cookies([])
+    return {"message": "Cookies borradas"}
 
 
-def _fetch_didi_shops_sync() -> dict:
-    """
-    Navega a shop/select, captura la respuesta de b.didi-food.com/auth/getShops
-    y guarda el resultado en sedes_didi.json (shops = sedes).
-    Requiere sesión iniciada (POST /didi/login).
-    """
-    try:
-        from playwright.sync_api import sync_playwright
-    except ImportError as e:
-        logger.error("Playwright no instalado: %s", e)
-        return {"_is_error": True, "success": False, "message": str(e), "saved_path": None}
-
-    cookies = get_didi_cookies()
-    if not cookies:
-        return {
-            "_is_error": True,
-            "success": False,
-            "message": "No hay cookies Didi. Ejecuta POST /didi/login primero.",
-            "saved_path": None,
-        }
-
-    try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            context = browser.new_context(
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
-                ignore_https_errors=True,
-            )
-            context.add_cookies(cookies)
-
-            page = context.new_page()
-            get_shops_response: list[dict] = []
-
-            def on_response(resp):
-                url = resp.url or ""
-                if "getShops" in url and resp.request.resource_type == "xhr":
-                    try:
-                        body = resp.json()
-                        get_shops_response.append(body)
-                    except Exception:
-                        pass
-
-            page.on("response", on_response)
-            page.goto(DIDI_SHOPS_URL, wait_until="domcontentloaded", timeout=30000)
-            page.wait_for_timeout(5000)  # esperar que cargue getShops
-
-            browser.close()
-
-            if get_shops_response:
-                data = get_shops_response[-1]
-                errno = data.get("errno", -1)
-                success = errno == 0
-                if success:
-                    # Filtrar sedes por lista negra (excluir Burger Monster, etc.)
-                    blacklist = get_didi_blacklist()
-                    shops_data = data.get("data", {}) or {}
-                    shops = shops_data.get("shops") or []
-                    if blacklist:
-                        original_count = len(shops)
-                        shops = [s for s in shops if str(s.get("shopId", "")) not in blacklist]
-                        shops_data = {**shops_data, "shops": shops, "total": len(shops)}
-                        data = {**data, "data": shops_data}
-                        logger.info("Didi: excluidas %d sedes por blacklist (Salchimonster: %d)", original_count - len(shops), len(shops))
-                    DIDI_SHOPS_JSON.parent.mkdir(parents=True, exist_ok=True)
-                    _write_json(DIDI_SHOPS_JSON, data)
-                    total = len(shops)
-                    logger.info("Didi sedes guardadas: %d en %s", total, DIDI_SHOPS_JSON.name)
-                return {
-                    "_is_error": False,
-                    "success": success,
-                    "message": data.get("errmsg", "ok") if success else data.get("errmsg", "error"),
-                    "total": data.get("data", {}).get("total", 0),
-                    "saved_path": str(DIDI_SHOPS_JSON) if success else None,
-                    "data": data,
-                }
-            return {
-                "_is_error": True,
-                "success": False,
-                "message": "No se capturó respuesta getShops (¿sesión expirada?)",
-                "saved_path": None,
-            }
-    except Exception as e:
-        logger.exception("Didi getShops: %s", e)
-        return {"_is_error": True, "success": False, "message": str(e), "saved_path": None}
+@app.get("/token")
+def read_token():
+    """Devuelve el token guardado (data.token del último login exitoso)."""
+    token = get_token()
+    if not token:
+        raise HTTPException(status_code=404, detail="No hay token. Haz login primero (POST /login).")
+    return {"token": token}
 
 
-def _fetch_didi_daily_orders_by_shop_sync() -> dict:
-    """
-    Estrategia sede a sede: va a shop/select (locales + excepciones blacklist),
-    selecciona cada sede y captura respuestas de b.didi-food.com:
-    - bench/order/history (data.orderList: orderId, displayNum, shopId, ver DIDI_SITE_EXAMPLE.JSON)
-    - bench/order/dailyOrders (data.serving + data.highlight).
-    Fusiona en didi_daily_orders.json y va alimentando didi_system_map.json por sede.
-    Requiere POST /didi/login y sedes en sedes_didi.json (GET /didi/shops).
-    """
-    try:
-        from playwright.sync_api import sync_playwright
-    except ImportError:
-        return {"_is_error": True, "success": False, "message": "Playwright no instalado", "collected": 0}
-
-    raw = _read_json(DIDI_SHOPS_JSON, {})
-    shops_data = (raw.get("data") or {}).get("shops") or []
-    blacklist = get_didi_blacklist()
-    if blacklist:
-        shops_data = [s for s in shops_data if str(s.get("shopId", "")) not in blacklist]
-    if not shops_data:
-        return {
-            "_is_error": True,
-            "success": False,
-            "message": "No hay sedes en sedes_didi.json (ejecuta GET /didi/shops antes).",
-            "collected": 0,
-        }
-
-    cookies = get_didi_cookies()
-    if not cookies:
-        return {"_is_error": True, "success": False, "message": "No hay cookies Didi. POST /didi/login primero.", "collected": 0}
-
-    shop_select_url = f"{DIDI_SHOPS_URL}?needback=1&from=order"
-    index = _get_didi_orders_index()
-    before_count = len(index)
-    today_colombia = _get_today_colombia()
-    map_path = _didi_system_map_path_for_date(today_colombia)
-    try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            context = browser.new_context(
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
-                ignore_https_errors=True,
-            )
-            context.add_cookies(cookies)
-            page = context.new_page()
-            daily_responses: list[dict] = []
-            history_responses: list[dict] = []
-
-            def on_response(resp):
-                url = resp.url or ""
-                if "didi-food" not in url:
-                    return
-                try:
-                    body = resp.json()
-                    if not isinstance(body, dict):
-                        return
-                    if "dailyOrders" in url:
-                        daily_responses.append(body)
-                    if "bench/order/history" in url:
-                        history_responses.append(body)
-                except Exception:
-                    pass
-
-            page.on("response", on_response)
-            page.goto(shop_select_url, wait_until="domcontentloaded", timeout=30000)
-            page.wait_for_timeout(5000)
-
-            total_shops = len(shops_data)
-            for i, shop in enumerate(shops_data):
-                shop_id = str(shop.get("shopId", ""))
-                shop_name = (shop.get("shopName") or "").strip()
-                if not shop_name:
-                    continue
-                logger.info("Didi dailyOrders: sede %s/%s %s", i + 1, total_shops, shop_name[:40])
-                daily_responses.clear()
-                history_responses.clear()
-                try:
-                    if i > 0:
-                        page.goto(shop_select_url, wait_until="domcontentloaded", timeout=12000)
-                        page.wait_for_timeout(1500)
-                    # Cerrar modal flotante que tapa la lista de sedes (el-floating is-fullscreen)
-                    try:
-                        page.keyboard.press("Escape")
-                        page.wait_for_timeout(300)
-                        page.keyboard.press("Escape")
-                        page.wait_for_timeout(500)
-                        close_btn = page.locator(".el-floating .el-dialog__headerbtn, .el-dialog__headerbtn").first
-                        if close_btn.count() > 0:
-                            close_btn.click(timeout=2000)
-                            page.wait_for_timeout(400)
-                    except Exception:
-                        pass
-                    loc = page.locator(f"text={shop_name}").first
-                    if loc.count() == 0:
-                        loc = page.get_by_text(shop_name, exact=False).first
-                    if loc.count() == 0:
-                        logger.warning("Didi dailyOrders: no se encontró sede %s, saltando", shop_name[:40])
-                        continue
-                    loc.scroll_into_view_if_needed()
-                    page.wait_for_timeout(400)
-                    loc.click(timeout=15000)
-                    page.wait_for_timeout(1500)
-                    page.goto(DIDI_STORE_ORDER_HISTORY_URL, wait_until="domcontentloaded", timeout=12000)
-                    page.wait_for_timeout(2500)
-                    try:
-                        page.wait_for_response(
-                            lambda r: "bench/order/history" in (r.url or "") or "dailyOrders" in (r.url or ""),
-                            timeout=10000,
-                        )
-                    except Exception:
-                        pass
-                    page.wait_for_timeout(1500)
-                except Exception as e:
-                    logger.warning("Didi dailyOrders: sede %s (%s): %s, siguiendo con la siguiente", shop_name[:30], i + 1, e)
-                    continue
-
-                for body in daily_responses:
-                    data = body.get("data") or {}
-                    for order in (data.get("serving") or []) + (data.get("highlight") or []):
-                        if not isinstance(order, dict):
-                            continue
-                        oid = str(order.get("orderId") or "").strip()
-                        if not oid:
-                            continue
-                        display = (order.get("displayNum") or "").strip()
-                        index[oid] = {"orderId": oid, "displayNum": display or oid, "shopId": order.get("shopId")}
-                for body in history_responses:
-                    data = body.get("data") or {}
-                    for order in data.get("orderList") or []:
-                        if not isinstance(order, dict):
-                            continue
-                        oid = str(order.get("orderId") or "").strip()
-                        if not oid:
-                            continue
-                        display = (order.get("displayNum") or "").strip()
-                        index[oid] = {"orderId": oid, "displayNum": display or oid, "shopId": order.get("shopId")}
-                # Guardar órdenes y alimentar el mapa tras cada sede
-                if True:
-                    DIDI_DAILY_ORDERS_JSON.parent.mkdir(parents=True, exist_ok=True)
-                    _write_json(DIDI_DAILY_ORDERS_JSON, index)
-                    order_id_to_display_inc: dict[str, str] = {}
-                    for oid, obj in index.items():
-                        if not oid:
-                            continue
-                        display = (obj.get("displayNum") or "").strip()
-                        if display:
-                            order_id_to_display_inc[oid] = display
-                    if order_id_to_display_inc:
-                        existing_map = _read_json(map_path, {})
-                        if isinstance(existing_map, dict):
-                            order_id_to_display_inc = {**existing_map, **order_id_to_display_inc}
-                        map_path.parent.mkdir(parents=True, exist_ok=True)
-                        _write_json(map_path, order_id_to_display_inc)
-                    logger.info("Didi dailyOrders: sede %s guardada (%d órdenes total), mapa %d entradas", shop_name[:35], len(index), len(order_id_to_display_inc))
-                # Esperar 1 minuto antes de cambiar de sede
-                if i < total_shops - 1:
-                    page.wait_for_timeout(60000)
-
-            browser.close()
-    except Exception as e:
-        logger.exception("Didi dailyOrders por sede: %s", e)
-        return {"_is_error": True, "success": False, "message": str(e), "collected": 0}
-
-    DIDI_DAILY_ORDERS_JSON.parent.mkdir(parents=True, exist_ok=True)
-    _write_json(DIDI_DAILY_ORDERS_JSON, index)
-
-    # Actualizar el mapa orderId -> displayText (didi_system_map_YYYY-MM-DD.json) para usar en deliverys
-    order_id_to_display: dict[str, str] = {}
-    for oid, obj in index.items():
-        if not oid:
-            continue
-        display = (obj.get("displayNum") or "").strip()
-        if display:
-            order_id_to_display[oid] = display
-    applied_to_deliverys = 0
-    if order_id_to_display:
-        existing = _read_json(map_path, {})
-        if isinstance(existing, dict):
-            order_id_to_display = {**existing, **order_id_to_display}
-        map_path.parent.mkdir(parents=True, exist_ok=True)
-        _write_json(map_path, order_id_to_display)
-        logger.info("Didi dailyOrders: mapa actualizado %s (%d orderId -> displayNum)", map_path.name, len(order_id_to_display))
-        applied_to_deliverys = _apply_didi_display_to_deliverys(today_colombia, order_id_to_display)
-        if applied_to_deliverys:
-            logger.info("Didi dailyOrders: aplicado a deliverys %s reemplazos", applied_to_deliverys)
-
-    collected = len(index) - before_count
-    logger.info("Didi dailyOrders: guardado %s (%d órdenes, +%d esta pasada)", DIDI_DAILY_ORDERS_JSON.name, len(index), collected)
-    return {"_is_error": False, "success": True, "collected": collected, "total": len(index), "shops_visited": len(shops_data), "map_updated": len(order_id_to_display), "applied_to_deliverys": applied_to_deliverys}
-
-
-def _fetch_didi_order_list_sync() -> dict[str, str]:
-    """
-    Genera didi_system_map.json consultando el endpoint de historial de órdenes.
-    - Navega a https://didi-food.com/es-CO/manager/order con cookies de inicio de sesión.
-    - Captura en la red las respuestas POST a order/border/historyList (forma en didi/headers.txt).
-    - La respuesta tiene la forma de didi/orders_didi_query.json (data.orderList con orderId y orderIndex.displayText).
-    - Arma didi/didi_system_map.json: { orderId -> displayText } (ej. "5764659591531007003" -> "#357002").
-    Requiere sesión iniciada (POST /didi/login). Por ahora solo se genera con la(s) respuesta(s) del endpoint.
-    """
-    import re
-    try:
-        from playwright.sync_api import sync_playwright
-    except ImportError:
-        return {}
-
-    cookies = get_didi_cookies()
-    if not cookies:
-        return {}
-
-    order_id_to_display: dict[str, str] = {}
-    try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            context = browser.new_context(
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
-                ignore_https_errors=True,
-            )
-            context.add_cookies(cookies)
-            page = context.new_page()
-            order_list_responses: list[dict] = []
-            seen_urls: list[str] = []
-            order_list_endpoint_seen: list[str] = []  # URLs que devolvieron data.orderList (aunque vacía)
-            all_didi_urls: list[str] = []  # Cualquier respuesta a didi-food (para diagnóstico si no llega historyList)
-
-            def on_response_log(resp):
-                url = resp.url or ""
-                if "didi-food" not in url:
-                    return
-                all_didi_urls.append(url[:220])
-                if "historyList" not in url:
-                    return
-                seen_urls.append(url[:200])
-                try:
-                    body = resp.json()
-                    if not isinstance(body, dict):
-                        return
-                    data = body.get("data")
-                    if not isinstance(data, dict):
-                        return
-                    order_list = data.get("orderList")
-                    # Forma de didi/orders_didi_query.json: data.total, data.totalPage, data.orderList[]
-                    if isinstance(order_list, list):
-                        order_list_endpoint_seen.append(url[:200])
-                        total = data.get("total") or 0
-                        if len(order_list) > 0 and total > 0:
-                            order_list_responses.append(body)
-                            logger.info("Didi order list: capturada respuesta historyList con %s órdenes desde %s", len(order_list), url[:120])
-                        else:
-                            logger.info("Didi order list: historyList con orderList vacía o total=0 desde %s total=%s len=%s", url[:120], total, len(order_list))
-                except Exception as e:
-                    logger.debug("Didi order list: respuesta no JSON o sin orderList - %s", e)
-
-            page.on("response", on_response_log)
-            # Ir solo con cookies a manager/order (sin clics)
-            page.goto(DIDI_MANAGER_ORDER_URL, wait_until="domcontentloaded", timeout=30000)
-            page.wait_for_timeout(5000)
-            current = (page.url or "").lower()
-            # Si la SPA redirigió a overview, forzar la ruta manager/order vía History API para que dispare historyList
-            if "manager/order" not in current or "overview" in current:
-                try:
-                    page.evaluate(
-                        "() => { history.pushState({}, '', '/es-CO/manager/order'); window.dispatchEvent(new PopStateEvent('popstate', { state: {} })); }"
-                    )
-                    page.wait_for_timeout(6000)
-                    logger.info("Didi order list: forzada ruta /es-CO/manager/order (estaba en %s)", current[:50])
-                except Exception as e:
-                    logger.debug("Didi order list: pushState: %s", e)
-            # Esperar vista de pedidos (no aplicar filtro de fecha para no quedar en 0 órdenes; la página usa su rango por defecto)
-            try:
-                page.wait_for_selector(".order-page, .order-filter, .pb-pagination", timeout=30000)
-            except Exception:
-                pass
-            page.wait_for_timeout(5000)
-            try:
-                page.wait_for_response(
-                    lambda r: "didi-food" in (r.url or "") and "historyList" in (r.url or ""),
-                    timeout=60000,
-                )
-            except Exception:
-                pass
-            page.wait_for_timeout(5000)
-
-            total_page = 1
-            if order_list_responses:
-                data0 = order_list_responses[0].get("data") or {}
-                total_page = data0.get("totalPage") or 1
-            total_page = max(1, int(total_page) if isinstance(total_page, (int, float)) else 1)
-            logger.info("Didi order list: totalPage=%s, obteniendo todas las páginas", total_page)
-
-            # Traer todas las páginas: clic en "siguiente" hasta total_page
-            for page_num in range(2, total_page + 1):
-                prev_count = len(order_list_responses)
-                next_btn = page.locator("div.pb-pagination button.btn-next")
-                if next_btn.count() == 0:
-                    logger.info("Didi order list: no hay botón siguiente (pág %s/%s)", page_num, total_page)
-                    break
-                if next_btn.is_disabled():
-                    logger.info("Didi order list: botón siguiente deshabilitado (pág %s/%s)", page_num, total_page)
-                    break
-                try:
-                    next_btn.scroll_into_view_if_needed()
-                    page.wait_for_timeout(500)
-                    next_btn.click()
-                except Exception as e:
-                    logger.debug("Didi pagination: clic en siguiente (pág %s) falló: %s", page_num, e)
-                    break
-                try:
-                    page.wait_for_response(
-                        lambda r: "didi-food" in (r.url or "") and "historyList" in (r.url or ""),
-                        timeout=40000,
-                    )
-                except Exception:
-                    pass
-                page.wait_for_timeout(5000)
-                if len(order_list_responses) <= prev_count:
-                    page.wait_for_timeout(3000)
-                if len(order_list_responses) <= prev_count:
-                    logger.info("Didi order list: página %s/%s no añadió respuestas nuevas", page_num, total_page)
-                else:
-                    logger.info("Didi order list: página %s/%s capturada (%s respuestas)", page_num, total_page, len(order_list_responses))
-
-            if not order_list_responses and order_list_endpoint_seen:
-                logger.warning("Didi order list: el endpoint devolvió orderList vacía. URLs con orderList: %s", order_list_endpoint_seen[:5])
-            elif not order_list_responses and seen_urls:
-                logger.warning("Didi order list: no se capturó ninguna respuesta con forma orderList. URLs historyList vistas: %s", seen_urls[:25])
-            elif not order_list_responses and all_didi_urls:
-                logger.warning(
-                    "Didi order list: hubo respuestas didi-food pero ninguna historyList (¿redirigió a login?). URLs vistas: %s",
-                    all_didi_urls[:20],
-                )
-            elif not order_list_responses:
-                logger.warning(
-                    "Didi order list: no se recibió ninguna respuesta de didi-food (¿sesión expirada? Haz POST /didi/login de nuevo)."
-                )
-
-            # Armar mapa orderId -> displayText solo para Salchimonster (excluir blacklist = Burger Monster etc.)
-            blacklist = get_didi_blacklist()
-            orders_list: list[dict] = []
-            for resp_data in order_list_responses:
-                data = resp_data.get("data") or {}
-                for o in data.get("orderList") or []:
-                    if not isinstance(o, dict):
-                        continue
-                    shop_id = str((o.get("shopInfo") or {}).get("shopId") or "")
-                    if blacklist and shop_id in blacklist:
-                        continue
-                    oid = (o.get("orderId") or "").strip()
-                    order_index = o.get("orderIndex")
-                    if isinstance(order_index, dict):
-                        display = (order_index.get("displayText") or "").strip()
-                    else:
-                        display = ""
-                    if oid and display and oid not in order_id_to_display:
-                        order_id_to_display[oid] = display
-                        orders_list.append({"orderId": oid, "displayText": display})
-
-            if blacklist:
-                logger.info("Didi order list: filtro Salchimonster aplicado (excluir %d shopIds de blacklist)", len(blacklist))
-
-            final_url = page.url or ""
-            # Siempre guardar order_list.json con diagnóstico para saber si se llegó al endpoint
-            DIDI_ORDER_LIST_JSON.parent.mkdir(parents=True, exist_ok=True)
-            diagnostic = {
-                "reached_url": final_url,
-                "cookies_used": len(cookies),
-                "historyList_responses_count": len(seen_urls),
-                "all_didi_urls_count": len(all_didi_urls),
-                "urls_seen_sample": seen_urls[:15],
-                "order_list_endpoint_seen_sample": order_list_endpoint_seen[:5],
-                "all_didi_urls_sample": all_didi_urls[:25],
-            }
-            payload = {
-                "fetched_at": _now().isoformat(),
-                "count": len(order_id_to_display),
-                "order_id_to_display": order_id_to_display,
-                "orders": orders_list,
-                "pages_captured": len(order_list_responses),
-                "diagnostic": diagnostic,
-            }
-
-            # Si no trajo nada en vivo, usar didi/orders_didi_query.json como respaldo (también filtrado Salchimonster)
-            if not order_id_to_display:
-                fallback_path = DIDI_SYSTEM_MAP_JSON.parent / "orders_didi_query.json"
-                if fallback_path.exists():
-                    try:
-                        fallback_data = json.loads(fallback_path.read_text(encoding="utf-8"))
-                        data_fb = (fallback_data or {}).get("data") or {}
-                        for o in data_fb.get("orderList") or []:
-                            if not isinstance(o, dict):
-                                continue
-                            shop_id_fb = str((o.get("shopInfo") or {}).get("shopId") or "")
-                            if blacklist and shop_id_fb in blacklist:
-                                continue
-                            oid = (o.get("orderId") or "").strip()
-                            order_index = o.get("orderIndex")
-                            if isinstance(order_index, dict):
-                                display = (order_index.get("displayText") or "").strip()
-                            else:
-                                display = ""
-                            if oid and display:
-                                order_id_to_display[oid] = display
-                        if order_id_to_display:
-                            _map_path = _didi_system_map_path_for_date(_get_today_colombia())
-                            _map_path.parent.mkdir(parents=True, exist_ok=True)
-                            _write_json(_map_path, order_id_to_display)
-                            payload["from_fallback_file"] = True
-                            payload["count"] = len(order_id_to_display)
-                            payload["order_id_to_display"] = order_id_to_display
-                            payload["orders"] = [{"orderId": k, "displayText": v} for k, v in order_id_to_display.items()]
-                            logger.info("Didi order list: 0 en vivo; usado respaldo orders_didi_query.json -> %s órdenes", len(order_id_to_display))
-                    except Exception as e:
-                        logger.warning("Didi order list: fallback orders_didi_query.json falló: %s", e)
-
-            # Poblar didi_system_map_YYYY-MM-DD.json siempre que haya órdenes (de live o fallback)
-            if order_id_to_display:
-                _map_path = _didi_system_map_path_for_date(_get_today_colombia())
-                _map_path.parent.mkdir(parents=True, exist_ok=True)
-                _write_json(_map_path, order_id_to_display)
-                logger.info(
-                    "Didi order list: guardado %s en %s y %s (%s órdenes, %s páginas)",
-                    "respaldo" if payload.get("from_fallback_file") else "live",
-                    _map_path.name,
-                    DIDI_ORDER_LIST_JSON.name,
-                    len(order_id_to_display),
-                    len(order_list_responses),
-                )
-
-            _write_json(DIDI_ORDER_LIST_JSON, payload)
-            browser.close()
-    except Exception as e:
-        logger.warning("Didi order list: %s", e)
-    return order_id_to_display
-
-
-def _is_didi_channel(row: dict) -> bool:
-    """True si la fila es del canal Didi Food (canaldelivery_id 505)."""
-    cid = (row.get("canaldelivery_id") or "").strip()
-    if cid == "505":
-        return True
-    canal = row.get("canaldelivery")
-    if isinstance(canal, dict):
-        if str(canal.get("canaldelivery_id") or "").strip() == "505":
-            return True
-        if (canal.get("canaldelivery_descripcion") or "").strip() == "Didi Food":
-            return True
-    return (row.get("canaldelivery_descripcion") or "").strip() == "Didi Food"
-
-
-def _apply_didi_display_to_deliverys(date_str: str, order_id_to_display: dict[str, str]) -> int:
-    """
-    En deliverys/{local_id}/{date_str}.json reemplaza delivery_codigolimadelivery
-    (ID largo Didi) por el displayText (ej. #357002) solo en órdenes del canal Didi Food
-    (canaldelivery_id 505), haciendo el cruce con el mapa orderId -> displayNum.
-    Devuelve número de reemplazos hechos.
-    """
-    if not order_id_to_display or not DELIVERYS_CACHE_DIR.exists():
-        return 0
-    total_replaced = 0
-    for local_dir in DELIVERYS_CACHE_DIR.iterdir():
-        if not local_dir.is_dir():
-            continue
-        filepath = local_dir / f"{date_str}.json"
-        if not filepath.exists():
-            continue
-        cached = _read_json(filepath, {})
-        data = cached.get("data")
-        if not isinstance(data, list):
-            continue
-        changed = False
-        file_replaced = 0
-        for row in data:
-            if not _is_didi_channel(row):
-                continue
-            cod = (row.get("delivery_codigolimadelivery") or "").strip()
-            if cod and cod in order_id_to_display:
-                row["delivery_codigolimadelivery"] = order_id_to_display[cod]
-                changed = True
-                file_replaced += 1
-                total_replaced += 1
-        if changed:
-            cached["data"] = data
-            _write_json(filepath, cached)
-            logger.info("Didi display: actualizado %s (%s reemplazos)", filepath.name, file_replaced)
-    return total_replaced
-
+# --- Login refresh (renovar sesión cada 12 h) ---
 
 _LOGIN_REFRESH_INTERVAL_SECONDS = 12 * 3600  # 12 horas: hacer login de nuevo para renovar sesión
-_DIDI_ORDER_LIST_INTERVAL_SECONDS = 3 * 60  # 3 minutos: consultar órdenes Didi y actualizar deliverys
-_DIDI_DAILY_ORDERS_INTERVAL_SECONDS = 5 * 60  # 5 minutos: captura sede a sede y aplica reemplazos (solo en horario de apertura)
 
 _login_executor: Any = None
+
 
 def _get_executor():
     """En Windows usa ProcessPoolExecutor para evitar NotImplementedError de Playwright con subprocesos en threads."""
@@ -1556,354 +749,6 @@ async def _login_refresh_loop() -> None:
                 logger.info("Login refresh: OK, token renovado")
         except Exception as e:
             logger.warning("Login refresh: excepción - %s", e)
-
-
-async def _refresh_deliverys_for_today() -> bool:
-    """Actualiza pedidos del día (deliverys) para todos los locales desde la API. Devuelve True si se refrescó algo."""
-    import httpx
-    locales_data = _locales_list_for_iteration()
-    local_ids = []
-    for item in locales_data:
-        lid = _locale_id(item) if isinstance(item, dict) else ""
-        if lid:
-            local_ids.append(lid)
-    if not local_ids:
-        return False
-    token = get_token()
-    cookies_dict = {c["name"]: c["value"] for c in get_cookies() if isinstance(c.get("name"), str) and isinstance(c.get("value"), str)}
-    if not token:
-        return False
-    try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            fecha_hoy = _get_today_colombia()
-            for i, local_id in enumerate(local_ids):
-                data = await _fetch_deliverys_for_local(client, local_id, cookies_dict, token)
-                _save_deliverys_for_local(local_id, data)
-                if i < len(local_ids) - 1:
-                    await asyncio.sleep(_DELIVERYS_DELAY_BETWEEN_LOCALS)
-        _update_canales_from_deliverys_cache()
-        return True
-    except Exception as e:
-        logger.warning("Didi: refresh deliverys antes de reemplazo - %s", e)
-        return False
-
-
-async def _run_didi_daily_orders_once() -> None:
-    """Ejecuta una vez al arranque: actualiza deliverys del día, captura Didi y aplica reemplazos (solo si estamos en horario de apertura)."""
-    if not _is_within_opening_hours():
-        logger.debug("Didi daily-orders (arranque): fuera de horario, se omite")
-        return
-    try:
-        await _refresh_deliverys_for_today()
-        loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(_get_executor(), _fetch_didi_daily_orders_by_shop_sync)
-        if result.get("_is_error"):
-            logger.warning("Didi daily-orders (arranque): %s", result.get("message", "error"))
-        else:
-            n = result.get("applied_to_deliverys", 0)
-            logger.info("Didi daily-orders (arranque): %s órdenes en mapa, %s reemplazos", result.get("map_updated", 0), n)
-    except Exception as e:
-        logger.warning("Didi daily-orders (arranque): %s", e)
-
-
-async def _didi_daily_orders_scheduler_loop() -> None:
-    """Cada 5 minutos actualiza deliverys del día, ejecuta captura Didi (sede a sede) y aplica reemplazos; solo en horario de apertura."""
-    import asyncio
-    await asyncio.sleep(90)  # espera inicial para no chocar con arranque
-    while True:
-        await asyncio.sleep(_DIDI_DAILY_ORDERS_INTERVAL_SECONDS)
-        if not _is_within_opening_hours():
-            logger.debug("Didi daily-orders: fuera de horario de apertura, se omite")
-            continue
-        try:
-            await _refresh_deliverys_for_today()
-            loop = asyncio.get_event_loop()
-            result = await loop.run_in_executor(_get_executor(), _fetch_didi_daily_orders_by_shop_sync)
-            if result.get("_is_error"):
-                logger.warning("Didi daily-orders: %s", result.get("message", "error"))
-            else:
-                n = result.get("applied_to_deliverys", 0)
-                if n:
-                    logger.info("Didi daily-orders: %s órdenes en mapa, %s reemplazos en deliverys", result.get("map_updated", 0), n)
-                else:
-                    logger.info("Didi daily-orders: %s órdenes en mapa", result.get("map_updated", 0))
-        except Exception as e:
-            logger.warning("Didi daily-orders scheduler: %s", e)
-
-
-async def _didi_order_list_scheduler_loop() -> None:
-    """Cada 3 minutos consulta la lista de órdenes en Didi (manager/order) y actualiza delivery_codigolimadelivery en deliverys con displayText."""
-    import asyncio
-    await asyncio.sleep(60)  # espera inicial 1 min para no chocar con arranque
-    while True:
-        await asyncio.sleep(_DIDI_ORDER_LIST_INTERVAL_SECONDS)
-        try:
-            loop = asyncio.get_event_loop()
-            order_id_to_display = await loop.run_in_executor(_get_executor(), _fetch_didi_order_list_sync)
-            if order_id_to_display:
-                today = _now().strftime("%Y-%m-%d")
-                n = _apply_didi_display_to_deliverys(today, order_id_to_display)
-                if n:
-                    logger.info("Didi order list: %s órdenes mapeadas, %s reemplazos en deliverys", len(order_id_to_display), n)
-            else:
-                logger.debug("Didi order list: sin datos (¿sesión expirada?)")
-        except Exception as e:
-            logger.warning("Didi order list scheduler: %s", e)
-
-
-@app.post("/login")
-async def login_with_chromium(method: str = "api"):
-    """
-    Login con las credenciales guardadas. Guarda las cookies de sesión.
-
-    - **method=api** (por defecto): POST directo al API de login.
-    - **method=form**: Rellena el formulario de la página (como un usuario) y hace clic en Iniciar sesión.
-      Útil si el API devuelve error del servidor (Slim/PHP) y el flujo por formulario funciona.
-    """
-    import asyncio
-    logger.info("POST /login recibido (method=%s)", method)
-    worker = _do_login_form_sync if method == "form" else _do_login_sync
-    try:
-        loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(_get_executor(), worker)
-    except Exception as e:
-        logger.exception("POST /login excepción: %s", e)
-        raise
-
-    if result.get("_is_error"):
-        code = result.get("status_code", 500)
-        content = {k: v for k, v in result.items() if k not in ("_is_error", "status_code", "detail")}
-        if result.get("detail"):
-            logger.error("Login error detail: %s", result["detail"])
-            content["detail_traceback"] = result["detail"]
-        logger.warning("POST /login respondiendo %s: %s", code, content.get("message", ""))
-        return JSONResponse(status_code=code, content=content)
-    logger.info("POST /login OK")
-    return {k: v for k, v in result.items() if k != "_is_error"}
-
-
-@app.get("/didi/credentials")
-def read_didi_credentials():
-    """Devuelve las credenciales Didi guardadas (clave enmascarada)."""
-    cred = get_didi_credentials()
-    out = cred.copy()
-    if out.get("password"):
-        out["password"] = "********"
-    return out
-
-
-@app.put("/didi/credentials")
-def update_didi_credentials(update: DidiCredentialsUpdate):
-    """Actualiza email y/o contraseña de Didi en didi_credentials.json."""
-    current = get_didi_credentials()
-    if update.email is not None:
-        current["email"] = update.email
-    if update.password is not None:
-        current["password"] = update.password
-    save_didi_credentials(current)
-    out = current.copy()
-    if out.get("password"):
-        out["password"] = "********"
-    return {"message": "Credenciales Didi actualizadas", "credentials": out}
-
-
-@app.post("/didi/login")
-async def didi_login():
-    """
-    Inicia sesión en Didi Food con el navegador (Playwright): correo + contraseña.
-    Usa las credenciales de didi_credentials.json (por defecto admon.salchimonster@gmail.com / Didi2024).
-    Guarda las cookies en didi_cookies.json para usarlas en otro proceso.
-    """
-    import asyncio
-    logger.info("POST /didi/login recibido")
-    try:
-        loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(_get_executor(), _do_didi_login_sync)
-    except Exception as e:
-        logger.exception("POST /didi/login excepción: %s", e)
-        raise
-
-    if result.get("_is_error"):
-        return JSONResponse(
-            status_code=result.get("status_code", 500),
-            content={k: v for k, v in result.items() if k not in ("_is_error", "status_code")},
-        )
-    return {k: v for k, v in result.items() if k != "_is_error"}
-
-
-@app.get("/didi/newOrders")
-async def didi_new_orders():
-    """
-    Obtiene las órdenes nuevas de Didi Food usando Playwright con las cookies guardadas.
-    Usa el navegador real para evitar 'session expired' (wsgsig y cookies correctas).
-    Requiere haber hecho POST /didi/login antes.
-    """
-    import asyncio
-    logger.info("GET /didi/newOrders recibido")
-    try:
-        loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(_get_executor(), _fetch_didi_new_orders_sync)
-    except Exception as e:
-        logger.exception("GET /didi/newOrders excepción: %s", e)
-        raise
-
-    if result.get("_is_error"):
-        return JSONResponse(status_code=500, content=result)
-    return result
-
-
-@app.get("/didi/shops")
-async def didi_shops():
-    """
-    Captura las sedes Didi (getShops) con sesión iniciada, navega a shop/select
-    y guarda el resultado en sedes_didi.json.
-    Requiere POST /didi/login antes.
-    """
-    import asyncio
-    logger.info("GET /didi/shops recibido")
-    try:
-        loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(_get_executor(), _fetch_didi_shops_sync)
-    except Exception as e:
-        logger.exception("GET /didi/shops excepción: %s", e)
-        raise
-
-    if result.get("_is_error"):
-        return JSONResponse(status_code=500, content=result)
-    return result
-
-
-def _get_didi_orders_index() -> dict:
-    """Carga el índice de órdenes (formato: {orderId: {orderId, displayNum}}). Migra formato antiguo si existe."""
-    raw = _read_json(DIDI_DAILY_ORDERS_JSON, {})
-    if not isinstance(raw, dict):
-        return {}
-    if "orders" in raw:
-        return {str(o.get("orderId", "")): o for o in (raw.get("orders") or []) if isinstance(o, dict) and o.get("orderId")}
-    return raw
-
-
-@app.get("/didi/daily-orders")
-def list_didi_daily_orders():
-    """Lista todas las órdenes Didi acumuladas (índice por orderId, O(1) acceso)."""
-    index = _get_didi_orders_index()
-    return {"count": len(index), "orders": list(index.values())}
-
-
-@app.get("/didi/daily-orders-capture")
-async def didi_daily_orders_capture():
-    """
-    Estrategia sede a sede: va a shop/select?needback=1&from=order,
-    selecciona cada sede de sedes_didi.json (Salchimonster, sin blacklist),
-    captura b.didi-food.com/bench/order/dailyOrders de cada una y fusiona en didi_daily_orders.json.
-    Requiere POST /didi/login y sedes en sedes_didi.json (GET /didi/shops).
-    """
-    import asyncio
-    loop = asyncio.get_event_loop()
-    result = await loop.run_in_executor(_get_executor(), _fetch_didi_daily_orders_by_shop_sync)
-    if result.get("_is_error"):
-        return JSONResponse(status_code=500, content=result)
-    return result
-
-
-@app.get("/didi/daily-orders/{order_id}")
-def get_didi_order(order_id: str):
-    """Acceso O(1) a una orden por orderId."""
-    index = _get_didi_orders_index()
-    order = index.get(order_id)
-    if not order:
-        raise HTTPException(status_code=404, detail=f"Orden {order_id} no encontrada")
-    return order
-
-
-@app.get("/didi/order-list")
-def didi_order_list(apply_to_deliverys: bool = False):
-    """
-    Devuelve el mapa orderId -> displayText desde didi_system_map_YYYY-MM-DD.json (hoy Colombia, actualizado por GET /didi/daily-orders-capture).
-    Si apply_to_deliverys=true, actualiza delivery_codigolimadelivery en los JSON de deliverys de hoy.
-    No usa manager/order; solo lectura del archivo generado por la captura sede a sede.
-    """
-    today_colombia = _get_today_colombia()
-    map_path = _didi_system_map_path_for_date(today_colombia)
-    order_id_to_display = _read_json(map_path, {})
-    if not isinstance(order_id_to_display, dict):
-        order_id_to_display = {}
-    out = {"count": len(order_id_to_display), "order_id_to_display": order_id_to_display, "map_file": map_path.name}
-    if apply_to_deliverys and order_id_to_display:
-        n = _apply_didi_display_to_deliverys(today_colombia, order_id_to_display)
-        out["applied_to_deliverys"] = n
-    return out
-
-
-@app.post("/didi/capture")
-def didi_capture(body: DidiCaptureBody):
-    """
-    Recibe datos capturados por la extensión Didi Capture (getShops, newOrders).
-    Guarda getShops en sedes_didi.json (con blacklist) y newOrders en didi_new_orders.json.
-    """
-    if not body.type or not body.data:
-        return JSONResponse(status_code=400, content={"error": "Faltan type o data"})
-    t = body.type.lower()
-    data = body.data
-
-    try:
-        if t == "getshops":
-            blacklist = get_didi_blacklist()
-            shops_data = data.get("data", {}) or {}
-            shops = shops_data.get("shops") or []
-            if blacklist:
-                shops = [s for s in shops if str(s.get("shopId", "")) not in blacklist]
-                logger.info("Didi capture: getShops filtrado por blacklist, %d sedes Salchimonster", len(shops))
-            out = {**data, "data": {**shops_data, "shops": shops, "total": len(shops)}}
-            _write_json(DIDI_SHOPS_JSON, out)
-            logger.info("Didi capture: sedes guardadas en %s (%d)", DIDI_SHOPS_JSON.name, len(shops))
-        elif t == "neworders":
-            _write_json(DIDI_NEW_ORDERS_JSON, data)
-            logger.info("Didi capture: newOrders guardado en %s", DIDI_NEW_ORDERS_JSON.name)
-        elif t == "dailyorders":
-            serving = (data.get("data") or {}).get("serving") or []
-            new_items = [(str(o.get("orderId", "")), {"orderId": o.get("orderId"), "displayNum": o.get("displayNum")}) for o in serving if isinstance(o, dict) and o.get("orderId")]
-            if not new_items:
-                return {"ok": True, "type": body.type}
-            index = _get_didi_orders_index()
-            for oid, order in new_items:
-                if oid:
-                    index[oid] = order
-            _write_json(DIDI_DAILY_ORDERS_JSON, index)
-            logger.info("Didi capture: dailyOrders fusionados en %s (+%d, total %d)", DIDI_DAILY_ORDERS_JSON.name, len(new_items), len(index))
-        else:
-            return JSONResponse(status_code=400, content={"error": f"Tipo desconocido: {body.type}"})
-
-        return {"ok": True, "type": body.type}
-    except Exception as e:
-        logger.exception("Didi capture: %s", e)
-        return JSONResponse(status_code=500, content={"error": str(e)})
-
-
-@app.get("/cookies")
-def read_cookies():
-    """Lista si hay cookies guardadas (no expone valores sensibles)."""
-    cookies = get_cookies()
-    return {
-        "count": len(cookies),
-        "names": [c.get("name") for c in cookies],
-    }
-
-
-@app.post("/cookies/clear")
-def clear_cookies():
-    """Borra las cookies guardadas (útil para forzar nuevo login)."""
-    save_cookies([])
-    return {"message": "Cookies borradas"}
-
-
-@app.get("/token")
-def read_token():
-    """Devuelve el token guardado (data.token del último login exitoso)."""
-    token = get_token()
-    if not token:
-        raise HTTPException(status_code=404, detail="No hay token. Haz login primero (POST /login).")
-    return {"token": token}
 
 
 # --- Informe de ventas (Excel) ---
@@ -2094,20 +939,24 @@ if ZoneInfo:
 
 
 def _now() -> datetime:
-    """Ahora en Colombia o UTC."""
+    """Ahora en Colombia o UTC (solo UTC si zoneinfo no está disponible)."""
     if _COLOMBIA_TZ:
         return datetime.now(_COLOMBIA_TZ)
     return datetime.utcnow()
 
 
+def _now_colombia_str() -> str:
+    """Fecha y hora actual en Colombia, formato legible para fetched_at: 'YYYY-MM-DD HH:MM:SS (Colombia)'."""
+    now = _now()
+    if _COLOMBIA_TZ and now.tzinfo:
+        return now.strftime("%Y-%m-%d %H:%M:%S") + " (Colombia)"
+    # Fallback sin zoneinfo: asumir que _now() es UTC y no etiquetar como Colombia
+    return now.strftime("%Y-%m-%d %H:%M:%S") + " (UTC)"
+
+
 def _get_today_colombia() -> str:
     """Fecha de hoy en Colombia (solo año-mes-día, sin hora)."""
     return _now().strftime("%Y-%m-%d")
-
-
-def _didi_system_map_path_for_date(date_str: str) -> Path:
-    """Ruta del mapa Didi por día: didi/didi_system_map_YYYY-MM-DD.json (evita crecimiento indefinido)."""
-    return DIDI_SYSTEM_MAP_JSON.parent / f"didi_system_map_{date_str}.json"
 
 
 def _parse_hhmm(s: str) -> tuple[int, int]:
@@ -2293,7 +1142,7 @@ async def _locales_scheduler_loop() -> None:
         await asyncio.sleep(_LOCALES_REFRESH_INTERVAL)
 
 
-_DELIVERYS_INTERVAL_SECONDS = 120  # 2 minutos
+_DELIVERYS_INTERVAL_SECONDS = 120  # consulta API cada 2 minutos
 _DELIVERYS_DELAY_BETWEEN_LOCALS = 5  # segundos entre cada sede para no saturar la API
 _DELIVERYS_MAX_PER_LOCAL = 100  # solo los primeros 100 resultados por sede
 
@@ -2306,6 +1155,26 @@ _deliverys_scheduler_state: dict[str, Any] = {
     "last_filas": 0,  # total deliverys obtenidos en la última pasada
     "interval_seconds": _DELIVERYS_INTERVAL_SECONDS,
 }
+
+
+async def _on_didi_map_updated(date_str: str) -> None:
+    """Se llama cuando se actualiza didi_restaurant_map (p. ej. extensión envía daily-orders). Hace merge y notifica."""
+    try:
+        _build_restaurant_map_for_date(date_str)
+        _cross_didi_map_and_update_orders(date_str)
+        restaurant_map_path = REPORTS_RESTAURANT_MAPS_DIR / f"restaurant_map_{date_str}.json"
+        if restaurant_map_path.exists():
+            by_local = _read_json(restaurant_map_path, {})
+            if isinstance(by_local, dict):
+                for local_id in by_local.keys():
+                    payload = {"type": "sede_ready", "local_id": local_id, "fecha": date_str}
+                    for ws in list(_report_ws_clients):
+                        try:
+                            await ws.send_json(payload)
+                        except Exception:
+                            pass
+    except Exception as e:
+        logger.debug("Merge al actualizar mapa Didi: %s", e)
 
 
 async def _deliverys_scheduler_loop() -> None:
@@ -2350,18 +1219,26 @@ async def _deliverys_scheduler_loop() -> None:
                 fecha_hoy = _get_today_colombia()
                 for i, local_id in enumerate(local_ids):
                     data = await _fetch_deliverys_for_local(client, local_id, cookies_dict, token)
-                    _save_deliverys_for_local(local_id, data)
+                    _save_deliverys_for_local(local_id, data, consultation_date=fecha_hoy)
                     total_filas += len(data)
-                    # Notificar por WebSocket que esta sede está lista para refrescar órdenes en tiempo real
-                    payload = {"type": "sede_ready", "local_id": local_id, "fecha": fecha_hoy}
-                    for ws in list(_report_ws_clients):
-                        try:
-                            await ws.send_json(payload)
-                        except Exception:
-                            pass
                     if i < len(local_ids) - 1:
                         await asyncio.sleep(_DELIVERYS_DELAY_BETWEEN_LOCALS)
             _update_canales_from_deliverys_cache()
+            fecha_hoy = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            _build_restaurant_map_for_date(fecha_hoy)
+            _cross_didi_map_and_update_orders(fecha_hoy)
+            # Notificar a frontend que recargue pedidos (ya con ids Didi reemplazados) para cada sede del día
+            restaurant_map_path = REPORTS_RESTAURANT_MAPS_DIR / f"restaurant_map_{fecha_hoy}.json"
+            if restaurant_map_path.exists():
+                by_local = _read_json(restaurant_map_path, {})
+                if isinstance(by_local, dict):
+                    for local_id in by_local.keys():
+                        payload = {"type": "sede_ready", "local_id": local_id, "fecha": fecha_hoy}
+                        for ws in list(_report_ws_clients):
+                            try:
+                                await ws.send_json(payload)
+                            except Exception:
+                                pass
             state["status"] = "deliverys_ready"
             state["last_error"] = None
             state["last_filas"] = total_filas
@@ -2376,11 +1253,22 @@ async def _deliverys_scheduler_loop() -> None:
 
 
 def _locales_list_for_iteration() -> list[dict[str, str] | str]:
-    """Devuelve la lista de locales tal como está en disco (dict con id/name o strings legacy)."""
+    """Devuelve la lista de locales filtrada por blacklist y con renombres aplicados."""
     data = _read_json(REPORTS_LOCALES_JSON, [])
     if not isinstance(data, list):
         return []
-    return data
+    cfg = _read_json(LOCALES_CONFIG_JSON, {})
+    blacklist: set[str] = {str(x) for x in (cfg.get("blacklist_ids") or [])}
+    rename: dict[str, str] = {str(k): v for k, v in (cfg.get("rename") or {}).items()}
+    result = []
+    for item in data:
+        lid = str(item.get("id", "")) if isinstance(item, dict) else ""
+        if lid and lid in blacklist:
+            continue
+        if lid and lid in rename and isinstance(item, dict):
+            item = {**item, "name": rename[lid]}
+        result.append(item)
+    return result
 
 
 def _locale_name(item: dict[str, str] | str) -> str:
@@ -2474,10 +1362,7 @@ async def report_ventas(
 @app.get("/report/locales")
 def get_report_locales():
     """Devuelve la lista de locales (sin repetir) registrados en los reportes."""
-    data = _read_json(REPORTS_LOCALES_JSON, [])
-    if not isinstance(data, list):
-        return {"locales": []}
-    return {"locales": data}
+    return {"locales": _locales_list_for_iteration()}
 
 
 @app.get("/report/canales-delivery")
@@ -2501,7 +1386,7 @@ def _sanitize_codigo(codigo: str) -> str:
 
 
 def _clean_privacy_name(s: str) -> str:
-    """Quita 'privacy protection' y asteriscos de nombres (ej. Didi). Deja solo la parte visible."""
+    """Quita 'privacy protection' y asteriscos de nombres. Deja solo la parte visible."""
     if not s or not isinstance(s, str):
         return ""
     s = s.strip()
@@ -2528,8 +1413,14 @@ def _delivery_row_to_order(row: dict) -> dict:
         monto_val = float(importe) if importe else None
     except (ValueError, TypeError):
         monto_val = None
+    codigo_integracion = (
+        (row.get("delivery_codigolimadelivery") or row.get("delivery_codigointegracion") or "").strip()
+    ) or "—"
+    codigo_integracion = _normalize_didi_display_num(codigo_integracion) or codigo_integracion
+    if not codigo_integracion:
+        codigo_integracion = "—"
     return {
-        "Codigo integracion": (row.get("delivery_codigolimadelivery") or row.get("delivery_codigointegracion") or "").strip() or "—",
+        "Codigo integracion": codigo_integracion,
         "Cliente": cliente,
         "Canal de delivery": canal,
         "Monto pagado": importe if importe else None,
@@ -2537,6 +1428,7 @@ def _delivery_row_to_order(row: dict) -> dict:
         "Hora": hora,
         "delivery_id": (row.get("delivery_id") or "").strip(),
         "delivery_identificadorunico": (row.get("delivery_identificadorunico") or "").strip(),
+        "delivery_orderid_canal": (row.get("delivery_codigolimadelivery_orderid") or "").strip(),
         "delivery_celular": (row.get("delivery_celular") or "").strip(),
     }
 
@@ -2572,6 +1464,17 @@ async def _fetch_deliverys_for_local(
         try:
             body = resp.json()
         except Exception:
+            break
+        if not isinstance(body, dict):
+            # La API a veces devuelve la lista directamente
+            if isinstance(body, list):
+                data = body
+            else:
+                data = []
+            if data:
+                all_data.extend(data)
+                if len(all_data) >= _DELIVERYS_MAX_PER_LOCAL:
+                    all_data = all_data[:_DELIVERYS_MAX_PER_LOCAL]
             break
         if body.get("tipo") == "401":
             break
@@ -2612,43 +1515,117 @@ def _migrate_old_deliverys_to_per_date() -> None:
         local_dir.mkdir(parents=True, exist_ok=True)
         for date_str, rows in by_date.items():
             filepath = local_dir / f"{date_str}.json"
-            out = {"fetched_at": cached.get("fetched_at") or _now().isoformat(), "data": rows}
+            out = {"fetched_at": cached.get("fetched_at") or _now_colombia_str(), "data": rows}
             _write_json(filepath, out)
         path.unlink()
         logger.info("Deliverys: migrado %s -> %s fechas", path.name, len(by_date))
 
 
-def _save_deliverys_for_local(local_id: str, data: list[dict]) -> None:
+def _normalize_didi_display_num(display_num: str) -> str:
+    """Quita el # del displayNum Didi para guardar y usar en URLs (ej. #379006 -> 379006)."""
+    s = (display_num or "").strip()
+    if s.startswith("#"):
+        s = s[1:]
+    return s
+
+
+def _looks_like_didi_display_num(cod: str) -> bool:
+    """True si el código es displayNum de Didi (#379001 o 379001) y no debe ser sobrescrito por el id largo de la API."""
+    s = (cod or "").strip()
+    if not s or len(s) > 15:
+        return False
+    if s.startswith("#") and len(s) > 1 and s[1:].isdigit():
+        return True
+    if s.isdigit() and 4 <= len(s) <= 10:
+        return True
+    return False
+
+
+def _save_deliverys_for_local(local_id: str, data: list[dict], consultation_date: str | None = None) -> None:
     """
-    Guarda deliverys por fecha: reports/deliverys/{local_id}/{YYYY-MM-DD}.json.
+    Guarda deliverys en reports/deliverys/{local_id}/{fecha}.json.
+    Si consultation_date está definida, el archivo se nombra con esa fecha (día de la consulta).
     Solo agrega o actualiza órdenes con las que vienen del reporte; nunca borra
     las que ya estaban (no se reemplaza el JSON completo por el que llegó).
+    Si una fila existente ya tiene delivery_codigolimadelivery como displayNum Didi (#xxx), se preserva al fusionar.
     """
     from collections import defaultdict
     DELIVERYS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     local_dir = DELIVERYS_CACHE_DIR / local_id
     local_dir.mkdir(parents=True, exist_ok=True)
-    by_date: dict[str, list[dict]] = defaultdict(list)
-    for row in data:
-        fecha = (row.get("delivery_fecha") or "").strip()[:10]
-        if fecha:
-            by_date[fecha].append(row)
-    fetched_at = _now().isoformat()
-    for date_str, new_rows in by_date.items():
+    fetched_at = _now_colombia_str()
+
+    if consultation_date:
+        # Un solo archivo con la fecha de consulta; solo órdenes cuya delivery_fecha es ese día
+        date_str = (consultation_date or "").strip()[:10]
+        if not date_str:
+            return
         filepath = local_dir / f"{date_str}.json"
-        # Cargar siempre lo que ya existía (no reemplazar por el JSON que llegó)
         existing_by_id: dict[str, dict] = {}
         if filepath.exists():
             cached = _read_json(filepath, {})
-            existing_list = (cached.get("data") or []) if isinstance(cached.get("data"), list) else []
+            if isinstance(cached, list):
+                existing_list = cached
+            else:
+                existing_list = (cached.get("data") or []) if isinstance(cached.get("data"), list) else []
             for i, r in enumerate(existing_list):
+                if not isinstance(r, dict):
+                    continue
+                row_fecha = (r.get("delivery_fecha") or "").strip()[:10]
+                if row_fecha != date_str:
+                    continue
                 did = (r.get("delivery_id") or "").strip()
                 key = did if did else f"__existing_{i}"
                 existing_by_id[key] = r
-        # Solo agregar o actualizar con las nuevas; nunca borrar existentes
+        for row in data:
+            if not isinstance(row, dict):
+                continue
+            row_fecha = (row.get("delivery_fecha") or "").strip()[:10]
+            if row_fecha != date_str:
+                continue
+            did = (row.get("delivery_id") or "").strip()
+            if did:
+                existing_row = existing_by_id.get(did)
+                if existing_row and _looks_like_didi_display_num((existing_row.get("delivery_codigolimadelivery") or "").strip()):
+                    row = dict(row)
+                    row["delivery_codigolimadelivery"] = (existing_row.get("delivery_codigolimadelivery") or "").strip()
+                existing_by_id[did] = row
+            else:
+                existing_by_id[f"__new_{len(existing_by_id)}"] = row
+        out = {"fetched_at": fetched_at, "data": list(existing_by_id.values())}
+        _write_json(filepath, out)
+        logger.debug("Deliverys: fusionados %s ítems para local_id=%s fecha=%s", len(out["data"]), local_id, date_str)
+        return
+
+    by_date: dict[str, list[dict]] = defaultdict(list)
+    for row in data:
+        if not isinstance(row, dict):
+            continue
+        fecha = (row.get("delivery_fecha") or "").strip()[:10]
+        if fecha:
+            by_date[fecha].append(row)
+    for date_str, new_rows in by_date.items():
+        filepath = local_dir / f"{date_str}.json"
+        existing_by_id = {}
+        if filepath.exists():
+            cached = _read_json(filepath, {})
+            if isinstance(cached, list):
+                existing_list = cached
+            else:
+                existing_list = (cached.get("data") or []) if isinstance(cached.get("data"), list) else []
+            for i, r in enumerate(existing_list):
+                if not isinstance(r, dict):
+                    continue
+                did = (r.get("delivery_id") or "").strip()
+                key = did if did else f"__existing_{i}"
+                existing_by_id[key] = r
         for r in new_rows:
             did = (r.get("delivery_id") or "").strip()
             if did:
+                existing_row = existing_by_id.get(did)
+                if existing_row and _looks_like_didi_display_num((existing_row.get("delivery_codigolimadelivery") or "").strip()):
+                    r = dict(r)
+                    r["delivery_codigolimadelivery"] = (existing_row.get("delivery_codigolimadelivery") or "").strip()
                 existing_by_id[did] = r
             else:
                 existing_by_id[f"__new_{len(existing_by_id)}"] = r
@@ -2665,8 +1642,13 @@ def _update_canales_from_deliverys_cache() -> None:
             if not json_file.is_file():
                 continue
             cached = _read_json(json_file, {})
-            data = cached.get("data") if isinstance(cached.get("data"), list) else []
+            if isinstance(cached, list):
+                data = cached
+            else:
+                data = cached.get("data") if isinstance(cached.get("data"), list) else []
             for row in data:
+                if not isinstance(row, dict):
+                    continue
                 canal_obj = row.get("canaldelivery") or {}
                 desc = (canal_obj.get("canaldelivery_descripcion") or row.get("canaldelivery_descripcion") or "").strip()
                 if desc:
@@ -2676,6 +1658,118 @@ def _update_canales_from_deliverys_cache() -> None:
         all_canales = sorted(set(existing) | canales_set)
         REPORTS_CANALES_DELIVERY_JSON.parent.mkdir(parents=True, exist_ok=True)
         _write_json(REPORTS_CANALES_DELIVERY_JSON, all_canales)
+
+
+def _build_restaurant_map_for_date(date_str: str) -> None:
+    """Construye restaurant_map_{date}.json con sede (local_id) e id de pedido solo para Didi (canal Didi Food)."""
+    date_str = (date_str or "").strip()[:10]
+    if not date_str:
+        return
+    # Por local: lista de delivery_codigolimadelivery que son Didi
+    by_local: dict[str, list[str]] = {}
+    if not DELIVERYS_CACHE_DIR.exists():
+        return
+    for local_dir in DELIVERYS_CACHE_DIR.iterdir():
+        if not local_dir.is_dir():
+            continue
+        local_id = local_dir.name
+        filepath = local_dir / f"{date_str}.json"
+        if not filepath.exists():
+            continue
+        cached = _read_json(filepath, {})
+        data = cached.get("data") if isinstance(cached, dict) and isinstance(cached.get("data"), list) else []
+        for row in data:
+            if not isinstance(row, dict):
+                continue
+            canal_obj = row.get("canaldelivery") or {}
+            desc = (canal_obj.get("canaldelivery_descripcion") or row.get("canaldelivery_descripcion") or "").strip()
+            if desc != "Didi Food":
+                continue
+            cod = (row.get("delivery_codigolimadelivery") or "").strip()
+            if not cod:
+                continue
+            if local_id not in by_local:
+                by_local[local_id] = []
+            if cod not in by_local[local_id]:
+                by_local[local_id].append(cod)
+    REPORTS_RESTAURANT_MAPS_DIR.mkdir(parents=True, exist_ok=True)
+    out_path = REPORTS_RESTAURANT_MAPS_DIR / f"restaurant_map_{date_str}.json"
+    _write_json(out_path, by_local)
+    logger.debug("Restaurant map: %s escrita para %s (%s locales)", out_path.name, date_str, len(by_local))
+
+
+def _cross_didi_map_and_update_orders(date_str: str) -> None:
+    """Cruza restaurant_map con didi_restaurant_map; actualiza filas con delivery_displaynum_didi y unifica fotos en uploads."""
+    date_str = (date_str or "").strip()[:10]
+    if not date_str:
+        return
+    restaurant_map_path = REPORTS_RESTAURANT_MAPS_DIR / f"restaurant_map_{date_str}.json"
+    didi_map_path = REPORTS_DIDI_MAPS_DIR / f"didi_restaurant_map_{date_str}.json"
+    if not restaurant_map_path.exists() or not didi_map_path.exists():
+        return
+    by_local = _read_json(restaurant_map_path, {})
+    if not isinstance(by_local, dict):
+        return
+    didi_map = _read_json(didi_map_path, {})
+    if not isinstance(didi_map, dict):
+        return
+    # didi_map: orderId (codigo_lima) -> displayNum (ej. "#597026")
+    updates_by_file: dict[Path, list[dict]] = {}  # filepath -> list of rows to write back
+    for local_id, codigos in by_local.items():
+        if not codigos:
+            continue
+        filepath = DELIVERYS_CACHE_DIR / local_id / f"{date_str}.json"
+        if not filepath.exists():
+            continue
+        cached = _read_json(filepath, {})
+        data = cached.get("data") if isinstance(cached, dict) and isinstance(cached.get("data"), list) else []
+        if not data:
+            continue
+        changed = False
+        for row in data:
+            if not isinstance(row, dict):
+                continue
+            cod = (row.get("delivery_codigolimadelivery") or "").strip()
+            if cod not in didi_map:
+                continue
+            display_num = didi_map.get(cod)
+            if not display_num:
+                continue
+            if isinstance(display_num, str):
+                display_num = display_num.strip()
+            display_num = _normalize_didi_display_num(display_num)
+            if not display_num:
+                continue
+            # Primero unificar fotos: copiar uploads/{codigo_lima} -> uploads/{displayNum sin #} para no perder fotos
+            src_base = UPLOADS_DIR / _sanitize_codigo(cod)
+            if src_base.exists() and src_base.is_dir():
+                dst_base = UPLOADS_DIR / _sanitize_codigo(display_num)
+                dst_base.mkdir(parents=True, exist_ok=True)
+                for sub in ("entrega", "apelacion", "respuestas"):
+                    src_sub = src_base / sub
+                    if not src_sub.is_dir():
+                        continue
+                    dst_sub = dst_base / sub
+                    dst_sub.mkdir(parents=True, exist_ok=True)
+                    for f in src_sub.rglob("*"):
+                        if f.is_file():
+                            rel = f.relative_to(src_sub)
+                            dest_file = dst_sub / rel
+                            dest_file.parent.mkdir(parents=True, exist_ok=True)
+                            if not dest_file.exists():
+                                try:
+                                    shutil.copy2(f, dest_file)
+                                except OSError as e:
+                                    logger.warning("No se pudo copiar foto %s -> %s: %s", f, dest_file, e)
+            # Reemplazar el id por el displayNum (así Codigo integracion y fotos usan el mismo valor)
+            row["delivery_codigolimadelivery"] = display_num
+            changed = True
+        if changed:
+            updates_by_file[filepath] = data
+            cached["data"] = data
+            _write_json(filepath, cached)
+    if updates_by_file:
+        logger.debug("Didi map cruzado para %s: actualizados %s archivos deliverys", date_str, len(updates_by_file))
 
 
 def _locale_id(item: dict[str, str] | str) -> str:
@@ -2724,27 +1818,123 @@ def _find_order_by_codigo(codigo: str) -> dict | None:
             for row in data:
                 cod_lima = (row.get("delivery_codigolimadelivery") or row.get("delivery_codigointegracion") or "").strip()
                 identificador = (row.get("delivery_identificadorunico") or "").strip()
-                if cod_lima == cod or identificador == cod:
+                orderid_canal = (row.get("delivery_codigolimadelivery_orderid") or "").strip()
+                cod_lima_norm = _normalize_didi_display_num(cod_lima) or cod_lima
+                if cod_lima == cod or cod_lima_norm == cod or identificador == cod or orderid_canal == cod:
                     return _delivery_row_to_order(row)
     return None
 
 
 def _get_fotos_for_codigo(codigo: str) -> dict:
-    """Devuelve { entrega: [urls], apelacion: { canal: [urls] }, respuestas: [urls] }."""
-    base = UPLOADS_DIR / _sanitize_codigo(codigo)
+    """Devuelve { entrega: [urls], apelacion: { canal: [urls] }, respuestas: [urls] } para un código (carpeta uploads)."""
+    cod = (codigo or "").strip().lstrip("#")
+    base = _uploads_base_for_codigo(codigo)
     out = {"entrega": [], "apelacion": {}, "respuestas": []}
     if not base.exists():
         return out
     for name in ("entrega", "respuestas"):
         folder = base / name
         if folder.is_dir():
-            out[name] = [f"/api/orders/{codigo}/fotos/{name}/{f.name}" for f in folder.iterdir() if f.is_file()]
+            out[name] = [f"/api/orders/{cod}/fotos/{name}/{f.name}" for f in folder.iterdir() if f.is_file()]
     apelacion_dir = base / "apelacion"
     if apelacion_dir.is_dir():
         for canal_dir in apelacion_dir.iterdir():
             if canal_dir.is_dir():
-                out["apelacion"][canal_dir.name] = [f"/api/orders/{codigo}/fotos/apelacion/{canal_dir.name}/{f.name}" for f in canal_dir.iterdir() if f.is_file()]
+                out["apelacion"][canal_dir.name] = [f"/api/orders/{cod}/fotos/apelacion/{canal_dir.name}/{f.name}" for f in canal_dir.iterdir() if f.is_file()]
     return out
+
+
+def _foto_codigo_candidates(order: dict) -> list[str]:
+    """Códigos a probar para buscar fotos de una orden (referencia canónica, orderId canal y alternativas)."""
+    cod_integ = (order.get("Codigo integracion") or "").strip()
+    identificador = (order.get("delivery_identificadorunico") or "").strip()
+    orderid_canal = (order.get("delivery_orderid_canal") or "").strip()
+    seen = set()
+    out = []
+    for c in (cod_integ, orderid_canal, identificador):
+        if c and c != "—" and c not in seen:
+            seen.add(c)
+            out.append(c)
+    return out
+
+
+def _get_fotos_for_order(order: dict) -> dict:
+    """Fotos de la orden probando todas las referencias (codigo integración e identificador unico). Así funcionan las que ya tienen foto en otra carpeta."""
+    merged = {"entrega": [], "apelacion": {}, "respuestas": []}
+    for cod in _foto_codigo_candidates(order):
+        fotos = _get_fotos_for_codigo(cod)
+        for url in fotos.get("entrega", []):
+            if url not in merged["entrega"]:
+                merged["entrega"].append(url)
+        for url in fotos.get("respuestas", []):
+            if url not in merged["respuestas"]:
+                merged["respuestas"].append(url)
+        for canal, urls in (fotos.get("apelacion") or {}).items():
+            for url in urls:
+                if url not in merged["apelacion"].setdefault(canal, []):
+                    merged["apelacion"][canal].append(url)
+    return merged
+
+
+def _organize_foto_refs() -> dict:
+    """
+    Renombra/organiza carpetas en uploads/ para que las fotos queden bajo la referencia canónica
+    (Codigo integracion). Si una carpeta existe por identificador unico y otra por codigo integración,
+    mueve el contenido a la carpeta del código de integración y elimina la carpeta duplicada.
+    """
+    if not DELIVERYS_CACHE_DIR.exists():
+        return {"moved": [], "errors": [], "message": "No hay cache de deliverys"}
+    # Construir mapa: carpeta_alternativa -> carpeta_canonica (sanitized)
+    alt_to_canon: dict[str, str] = {}
+    for local_dir in DELIVERYS_CACHE_DIR.iterdir():
+        if not local_dir.is_dir():
+            continue
+        for json_file in local_dir.glob("*.json"):
+            cached = _read_json(json_file, {})
+            data = cached.get("data") if isinstance(cached.get("data"), list) else []
+            for row in data:
+                o = _delivery_row_to_order(row)
+                can = _sanitize_codigo((o.get("Codigo integracion") or "").strip())
+                ident = (o.get("delivery_identificadorunico") or "").strip()
+                alt = _sanitize_codigo(ident) if ident and ident != "—" else ""
+                if alt and can and alt != can:
+                    alt_to_canon[alt] = can
+    moved = []
+    errors = []
+    UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+    for alt_folder, can_folder in alt_to_canon.items():
+        src = UPLOADS_DIR / alt_folder
+        if not src.is_dir():
+            continue
+        dst = UPLOADS_DIR / can_folder
+        try:
+            if not dst.exists():
+                shutil.copytree(src, dst)
+                shutil.rmtree(src)
+                moved.append({"from": alt_folder, "to": can_folder})
+            else:
+                for sub in ("entrega", "respuestas", "apelacion"):
+                    sub_src = src / sub
+                    if not sub_src.is_dir():
+                        continue
+                    sub_dst = dst / sub
+                    sub_dst.mkdir(parents=True, exist_ok=True)
+                    if sub == "apelacion":
+                        for canal_dir in sub_src.iterdir():
+                            if canal_dir.is_dir():
+                                (sub_dst / canal_dir.name).mkdir(parents=True, exist_ok=True)
+                                for f in canal_dir.iterdir():
+                                    if f.is_file():
+                                        shutil.copy2(f, sub_dst / canal_dir.name / f.name)
+                    else:
+                        for f in sub_src.iterdir():
+                            if f.is_file():
+                                shutil.copy2(f, sub_dst / f.name)
+                shutil.rmtree(src)
+                moved.append({"from": alt_folder, "to": can_folder, "merged": True})
+        except Exception as e:
+            errors.append({"folder": alt_folder, "error": str(e)})
+    return {"moved": moved, "errors": errors, "message": f"Organizadas {len(moved)} carpetas" if moved else "Nada que organizar"}
 
 
 def _get_no_entregadas_set() -> set[str]:
@@ -2782,11 +1972,19 @@ def _unmark_no_entregada(delivery_id: str) -> None:
 
 
 def _order_has_entrega_photo(codigo: str) -> bool:
-    """True si la orden tiene al menos una foto en uploads/{codigo}/entrega/."""
+    """True si la orden tiene al menos una foto en uploads (misma lógica que servir fotos: base + fallback sin #)."""
     if not (codigo or "").strip() or (codigo or "").strip() == "—":
         return False
-    base = UPLOADS_DIR / _sanitize_codigo(codigo) / "entrega"
+    base = _uploads_base_for_codigo(codigo) / "entrega"
     return base.is_dir() and any(base.iterdir())
+
+
+def _order_has_entrega_photo_from_order(order: dict) -> bool:
+    """True si la orden tiene foto de entrega en alguna de sus referencias (codigo integración o identificador unico)."""
+    for cod in _foto_codigo_candidates(order):
+        if _order_has_entrega_photo(cod):
+            return True
+    return False
 
 
 # --- Apelaciones (marcar para apelar / apelar / reporte) ---
@@ -2814,11 +2012,38 @@ def _get_apelacion_by_codigo(codigo: str) -> dict | None:
     return None
 
 
+def _total_reembolsado(item: dict) -> float:
+    """Suma de todos los reembolsos (incrementales). Compat con legacy: monto_reembolsado único."""
+    reembolsos = item.get("reembolsos")
+    if isinstance(reembolsos, list):
+        return sum(float(r.get("monto") or 0) for r in reembolsos if isinstance(r, dict))
+    if item.get("reembolsado") and item.get("monto_reembolsado") is not None:
+        return float(item.get("monto_reembolsado") or 0)
+    return 0.0
+
+
+def _total_descuentos_sede(item: dict) -> float:
+    """Suma de descuentos a la sede (incrementales por quincena). Compat con legacy: descuento_confirmado sin lista."""
+    descuentos = item.get("descuentos")
+    if isinstance(descuentos, list):
+        return sum(float(d.get("monto") or 0) for d in descuentos if isinstance(d, dict))
+    if item.get("descuento_confirmado") and _calcular_perdida_antes_descuento(item) > 0:
+        return _calcular_perdida_antes_descuento(item)
+    return 0.0
+
+
+def _calcular_perdida_antes_descuento(item: dict) -> float:
+    """Pérdida = monto_descontado - total reembolsado por el canal (antes de descontar a la sede)."""
+    descontado = float(item.get("monto_descontado") or 0)
+    devuelto = _total_reembolsado(item)
+    return max(0.0, descontado - devuelto)
+
+
 def _order_has_respuesta_foto(codigo: str) -> bool:
-    """True si la orden tiene al menos una foto en respuestas (respuesta del canal)."""
+    """True si la orden tiene al menos una foto en respuestas (respuesta del canal). Misma base que servir fotos."""
     if not (codigo or "").strip():
         return False
-    base = UPLOADS_DIR / _sanitize_codigo(codigo) / "respuestas"
+    base = _uploads_base_for_codigo(codigo) / "respuestas"
     return base.is_dir() and any(f for f in base.iterdir() if f.is_file())
 
 
@@ -2896,28 +2121,23 @@ def api_get_orders(
 
     no_entregadas = _get_no_entregadas_set()
     for o in orders:
-        cod = (o.get("Codigo integracion") or "").strip()
-        if cod and cod != "—":
-            o["has_entrega_photo"] = _order_has_entrega_photo(cod)
-            fotos = _get_fotos_for_codigo(cod)
-            o["fotos_entrega"] = fotos.get("entrega", [])
-        else:
-            o["has_entrega_photo"] = False
-            o["fotos_entrega"] = []
+        o["has_entrega_photo"] = _order_has_entrega_photo_from_order(o)
+        fotos = _get_fotos_for_order(o)
+        o["fotos_entrega"] = fotos.get("entrega", [])
         o["no_entregada"] = (o.get("delivery_id") or "").strip() in no_entregadas
     return {"orders": orders}
 
 
 @app.get("/api/orders/by-codigo/{codigo:path}")
 def api_get_order_by_codigo(codigo: str):
-    """Devuelve la orden buscando por código de integración o identificador único; fotos y flags has_entrega_photo, no_entregada."""
+    """Devuelve la orden buscando por código de integración o identificador único; fotos y flags has_entrega_photo, no_entregada. Fotos se buscan en todas las referencias (codigo integración e identificador unico)."""
     order = _find_order_by_codigo(codigo)
-    cod_integ = (order.get("Codigo integracion") or "").strip() if order else ""
-    fotos_codigo = cod_integ if (cod_integ and cod_integ != "—") else codigo
-    fotos = _get_fotos_for_codigo(fotos_codigo)
     if order:
-        order["has_entrega_photo"] = _order_has_entrega_photo(fotos_codigo) if fotos_codigo else False
+        fotos = _get_fotos_for_order(order)
+        order["has_entrega_photo"] = _order_has_entrega_photo_from_order(order)
         order["no_entregada"] = (order.get("delivery_id") or "").strip() in _get_no_entregadas_set()
+    else:
+        fotos = _get_fotos_for_codigo(codigo)
     return {"order": order, "fotos": fotos}
 
 
@@ -3012,7 +2232,7 @@ def api_apelaciones_pendientes(
             continue  # sede decidió no apelar; va al apartado Descuentos
         o["apelacion_monto_descontado"] = ap.get("monto_descontado")
         o["apelacion_canal"] = ap.get("canal")
-        fotos = _get_fotos_for_codigo(cod)
+        fotos = _get_fotos_for_order(o)
         o["fotos_entrega"] = fotos.get("entrega", [])
         pendientes.append(o)
     return {"orders": pendientes}
@@ -3085,15 +2305,22 @@ def api_reembolsos_pendientes(
     fecha_desde: str = Query("", description="YYYY-MM-DD"),
     fecha_hasta: str = Query("", description="YYYY-MM-DD"),
 ):
-    """Órdenes apeladas (con monto_devuelto) que aún no están marcadas como reembolsadas."""
+    """Órdenes apeladas (con monto_devuelto) que aún no están totalmente reembolsadas (reembolso puede ser incremental)."""
     apelaciones = _read_apelaciones()
-    items = [i for i in apelaciones.get("items", []) if i.get("monto_devuelto") is not None and i.get("reembolsado") is not True]
+    items = [
+        i for i in apelaciones.get("items", [])
+        if i.get("monto_devuelto") is not None
+        and _total_reembolsado(i) < float(i.get("monto_devuelto") or 0)
+    ]
     if local:
         items = [i for i in items if (i.get("local") or "").strip() == local.strip()]
     if fecha_desde:
         items = [i for i in items if (i.get("fecha") or "") >= fecha_desde]
     if fecha_hasta:
         items = [i for i in items if (i.get("fecha") or "") <= fecha_hasta]
+    for i in items:
+        i["total_reembolsado"] = round(_total_reembolsado(i), 2)
+        i["reembolsos"] = i.get("reembolsos") if isinstance(i.get("reembolsos"), list) else []
     return {"items": items}
 
 
@@ -3106,7 +2333,7 @@ class ReembolsarBody(BaseModel):
 
 @app.post("/api/apelaciones/reembolsar")
 def api_reembolsar(body: ReembolsarBody):
-    """Marca la orden como reembolsada."""
+    """Registra un reembolso (incremental). El canal puede devolver en varios pagos."""
     cod = (body.codigo or "").strip()
     if not cod:
         raise HTTPException(status_code=400, detail="codigo requerido")
@@ -3115,29 +2342,42 @@ def api_reembolsar(body: ReembolsarBody):
         raise HTTPException(status_code=404, detail="Orden no encontrada en apelaciones")
     if ap.get("monto_devuelto") is None:
         raise HTTPException(status_code=400, detail="La orden no tiene monto_devuelto")
-    if ap.get("reembolsado"):
-        raise HTTPException(status_code=400, detail="Esta orden ya fue marcada como reembolsada")
-    monto = float(ap.get("monto_devuelto", 0)) if body.mismo_valor else (float(body.monto_reembolsado or 0))
+    monto_devuelto = float(ap.get("monto_devuelto", 0))
+    if body.mismo_valor:
+        ya_reembolsado = _total_reembolsado(ap)
+        monto = max(0, monto_devuelto - ya_reembolsado)
+    else:
+        monto = float(body.monto_reembolsado or 0)
+    if monto <= 0:
+        raise HTTPException(status_code=400, detail="El monto debe ser mayor a 0")
+    fecha = (body.fecha_reembolso or "").strip()[:10] or _now().strftime("%Y-%m-%d")
     data = _read_apelaciones()
     for item in data.get("items", []):
-        if (item.get("codigo") or "").strip() == cod:
-            item["reembolsado"] = True
-            item["fecha_reembolso"] = (body.fecha_reembolso or "").strip()[:10] or _now().strftime("%Y-%m-%d")
-            item["monto_reembolsado"] = monto
-            item["mismo_valor"] = body.mismo_valor
-            break
+        if (item.get("codigo") or "").strip() != cod:
+            continue
+        reembolsos = item.get("reembolsos")
+        if not isinstance(reembolsos, list):
+            reembolsos = []
+            if item.get("reembolsado") and item.get("monto_reembolsado") is not None:
+                reembolsos.append({
+                    "monto": float(item.get("monto_reembolsado") or 0),
+                    "fecha": (item.get("fecha_reembolso") or "")[:10] or "",
+                })
+            item["reembolsos"] = reembolsos
+        reembolsos.append({"monto": monto, "fecha": fecha})
+        total = sum(float(r.get("monto") or 0) for r in reembolsos if isinstance(r, dict))
+        monto_devuelto = float(item.get("monto_devuelto") or 0)
+        item["reembolsado"] = total >= monto_devuelto
+        item["fecha_reembolso"] = fecha
+        item["monto_reembolsado"] = total
+        break
     _write_apelaciones(data)
     return {"ok": True}
 
 
 def _calcular_perdida(item: dict) -> float:
-    """Perdida = monto_descontado - lo que nos devolvieron (monto_reembolsado si reembolsado, else monto_devuelto)."""
-    descontado = float(item.get("monto_descontado") or 0)
-    if item.get("reembolsado"):
-        devuelto = float(item.get("monto_reembolsado") or 0)
-    else:
-        devuelto = float(item.get("monto_devuelto") or 0) if item.get("monto_devuelto") is not None else 0
-    return max(0, descontado - devuelto)
+    """Pérdida a descontar a la sede = monto_descontado - total reembolsado por el canal (incremental o legacy)."""
+    return _calcular_perdida_antes_descuento(item)
 
 
 @app.get("/api/apelaciones/estado-admin")
@@ -3158,20 +2398,31 @@ def api_apelaciones_estado_admin(
             continue
         out = dict(item)
         perdida = _calcular_perdida(item)
+        total_reemb = _total_reembolsado(item)
+        total_descu = _total_descuentos_sede(item)
         out["perdida"] = round(perdida, 2)
+        out["total_reembolsado"] = round(total_reemb, 2)
+        out["total_descuentos_sede"] = round(total_descu, 2)
+        out["perdida_restante"] = round(max(0, perdida - total_descu), 2)
         # Lista de estados: reembolso, descuento, y siempre mostrar "La sede decidió no apelar" si aplica
         estados = []
-        if item.get("reembolsado"):
+        monto_dev = float(item.get("monto_devuelto") or 0)
+        if monto_dev > 0 and total_reemb >= monto_dev:
             estados.append("reembolsada")
-        if item.get("descuento_confirmado"):
+        elif monto_dev > 0:
+            estados.append("apelada")
+        if total_descu >= perdida and perdida > 0:
             estados.append("descuento_confirmado")
         if item.get("sede_decidio_no_apelar"):
             estados.append("sede_decidio_no_apelar")
+        # (estados ya puede tener reembolsada o apelada según monto_devuelto y total_reembolsado)
         if not estados:
             if item.get("monto_devuelto") is not None:
                 estados = ["apelada"]
             else:
                 estados = ["pendiente_apelar"]
+        out["reembolsos"] = item.get("reembolsos") if isinstance(item.get("reembolsos"), list) else []
+        out["descuentos"] = item.get("descuentos") if isinstance(item.get("descuentos"), list) else []
         out["estados"] = estados
         out["estado"] = estados[-1]  # último para compatibilidad y orden por defecto
         items.append(out)
@@ -3199,24 +2450,30 @@ def api_apelaciones_descuentos(
             continue
         if fecha_hasta and (item.get("fecha") or "") > fecha_hasta:
             continue
+        total_descu = _total_descuentos_sede(item)
         if solo_confirmados:
-            if not item.get("descuento_confirmado"):
+            if total_descu < perdida:
                 continue
-        elif solo_pendientes and item.get("descuento_confirmado"):
+        elif solo_pendientes and total_descu >= perdida:
             continue
         out = dict(item)
         out["perdida"] = round(perdida, 2)
+        out["total_descuentos_sede"] = round(total_descu, 2)
+        out["perdida_restante"] = round(max(0, perdida - total_descu), 2)
+        out["descuentos"] = item.get("descuentos") if isinstance(item.get("descuentos"), list) else []
         items.append(out)
     return {"items": items}
 
 
 class ConfirmarDescuentoBody(BaseModel):
     codigo: str
+    monto: float = 0  # Monto descontado en esta quincena (incremental)
+    quincena: str = ""  # Ej: "2026-02-1" (1ra quincena feb), "2026-02-2" (2da quincena)
 
 
 @app.post("/api/apelaciones/confirmar-descuento")
 def api_confirmar_descuento(body: ConfirmarDescuentoBody):
-    """Marca que ya se descontó en nómina a la sede por esta pérdida."""
+    """Registra un descuento a la sede (incremental por quincena). Puede hacerse en varias quincenas."""
     cod = (body.codigo or "").strip()
     if not cod:
         raise HTTPException(status_code=400, detail="codigo requerido")
@@ -3226,12 +2483,33 @@ def api_confirmar_descuento(body: ConfirmarDescuentoBody):
     perdida = _calcular_perdida(ap)
     if perdida <= 0:
         raise HTTPException(status_code=400, detail="Esta orden no tiene pérdida a descontar")
+    monto = float(body.monto or 0)
+    if monto <= 0:
+        raise HTTPException(status_code=400, detail="Indica el monto descontado en esta quincena")
+    quincena = (body.quincena or "").strip() or (_now().strftime("%Y-%m") + "-1")
+    fecha = _now().strftime("%Y-%m-%d")
     data = _read_apelaciones()
     for item in data.get("items", []):
-        if (item.get("codigo") or "").strip() == cod:
-            item["descuento_confirmado"] = True
-            item["fecha_descuento_confirmado"] = _now().strftime("%Y-%m-%d")
-            break
+        if (item.get("codigo") or "").strip() != cod:
+            continue
+        descuentos = item.get("descuentos")
+        if not isinstance(descuentos, list):
+            descuentos = []
+            if item.get("descuento_confirmado") and item.get("fecha_descuento_confirmado"):
+                # Migrar: lo ya descontado en el pasado = perdida - este monto (evita duplicar)
+                resto = max(0, perdida - monto)
+                if resto > 0:
+                    descuentos.append({
+                        "monto": resto,
+                        "quincena": "",
+                        "fecha": (item.get("fecha_descuento_confirmado") or "")[:10],
+                    })
+            item["descuentos"] = descuentos
+        descuentos.append({"monto": monto, "quincena": quincena, "fecha": fecha})
+        total_descontado = sum(float(d.get("monto") or 0) for d in descuentos if isinstance(d, dict))
+        item["descuento_confirmado"] = total_descontado >= perdida
+        item["fecha_descuento_confirmado"] = fecha
+        break
     _write_apelaciones(data)
     return {"ok": True}
 
@@ -3306,7 +2584,8 @@ def api_informes(
         total_descontado += float(i.get("monto_descontado") or 0)
         if i.get("monto_devuelto") is not None:
             total_devuelto += float(i.get("monto_devuelto") or 0)
-        if i.get("reembolsado"):
+        monto_dev = float(i.get("monto_devuelto") or 0) if i.get("monto_devuelto") is not None else 0
+        if monto_dev > 0 and _total_reembolsado(i) >= monto_dev:
             total_reembolsos += 1
             reembolsos_por_dia[f] += 1
     total_perdido = round(total_descontado - total_devuelto, 2)
@@ -3394,8 +2673,11 @@ def api_reporte_maestro(
     local: str = Query("", description="Filtrar por sede (vacío = todas)"),
     fecha_desde: str = Query(..., description="YYYY-MM-DD"),
     fecha_hasta: str = Query(..., description="YYYY-MM-DD"),
+    first: int = Query(0, ge=0, description="Índice del primer registro (paginación)"),
+    rows: int = Query(20, ge=1, le=500, description="Registros por página"),
+    filter: str = Query("", description="Filtro global (local, código, canal, cliente)"),
 ):
-    """Admin: reporte maestro con órdenes + apelaciones + fotos (entrega, respuestas) + reembolsos + descuentos."""
+    """Admin: reporte maestro con órdenes + apelaciones + fotos. Paginación real (first/rows) y filtro opcional."""
     desde = (fecha_desde or "").strip()[:10]
     hasta = (fecha_hasta or "").strip()[:10]
     if not desde or not hasta:
@@ -3403,7 +2685,7 @@ def api_reporte_maestro(
     locales_data = _locales_list_for_iteration()
     apelaciones = _read_apelaciones()
     apelaciones_by_cod = {(a.get("codigo") or "").strip(): a for a in apelaciones.get("items", []) if (a.get("codigo") or "").strip()}
-    rows = []
+    rows_list = []
     for item in locales_data:
         local_id = _locale_id(item) if isinstance(item, dict) else ""
         local_name = _locale_name(item)
@@ -3426,18 +2708,22 @@ def api_reporte_maestro(
                 if not cod or cod == "—":
                     continue
                 ap = apelaciones_by_cod.get(cod)
-                fotos = _get_fotos_for_codigo(cod)
+                fotos = _get_fotos_for_order(order)
                 perdida = round(_calcular_perdida(ap), 2) if ap else 0
+                total_reemb = _total_reembolsado(ap) if ap else 0
+                total_descu = _total_descuentos_sede(ap) if ap else 0
+                perdida_restante = round(max(0, perdida - total_descu), 2) if ap else 0
                 estados_apel = []
                 if ap:
-                    if ap.get("reembolsado"):
+                    monto_dev = float(ap.get("monto_devuelto") or 0)
+                    if monto_dev > 0 and total_reemb >= monto_dev:
                         estados_apel.append("reembolsada")
-                    if ap.get("descuento_confirmado"):
+                    if total_descu >= perdida and perdida > 0:
                         estados_apel.append("descuento_confirmado")
+                    if ap.get("sede_decidio_no_apelar"):
+                        estados_apel.append("sede_decidio_no_apelar")
                     if not estados_apel:
-                        if ap.get("sede_decidio_no_apelar"):
-                            estados_apel = ["sede_decidio_no_apelar"]
-                        elif ap.get("monto_devuelto") is not None:
+                        if monto_dev > 0:
                             estados_apel = ["apelada"]
                         else:
                             estados_apel = ["pendiente_apelar"]
@@ -3450,20 +2736,24 @@ def api_reporte_maestro(
                     "monto_pagado": order.get("Monto pagado"),
                     "hora": order.get("Hora"),
                     "delivery_id": order.get("delivery_id"),
-                    "has_entrega_photo": _order_has_entrega_photo(cod),
+                    "has_entrega_photo": _order_has_entrega_photo_from_order(order),
                     "fotos_entrega": fotos.get("entrega", []),
                     "fotos_apelacion": fotos.get("apelacion", {}),
                     "fotos_respuestas": fotos.get("respuestas", []),
                     "apelacion": {
                         "monto_descontado": ap.get("monto_descontado"),
                         "monto_devuelto": ap.get("monto_devuelto"),
-                        "monto_reembolsado": ap.get("monto_reembolsado"),
+                        "monto_reembolsado": round(total_reemb, 2),
                         "fecha_apelado": ap.get("fecha_apelado"),
                         "fecha_estimada_devolucion": ap.get("fecha_estimada_devolucion"),
-                        "reembolsado": ap.get("reembolsado"),
+                        "reembolsado": total_reemb >= float(ap.get("monto_devuelto") or 0) if ap.get("monto_devuelto") is not None else ap.get("reembolsado"),
                         "fecha_reembolso": ap.get("fecha_reembolso"),
-                        "descuento_confirmado": ap.get("descuento_confirmado"),
+                        "reembolsos": ap.get("reembolsos") if isinstance(ap.get("reembolsos"), list) else [],
+                        "descuento_confirmado": total_descu >= perdida and perdida > 0,
                         "fecha_descuento_confirmado": ap.get("fecha_descuento_confirmado"),
+                        "descuentos": ap.get("descuentos") if isinstance(ap.get("descuentos"), list) else [],
+                        "total_descuentos_sede": round(total_descu, 2),
+                        "perdida_restante": perdida_restante,
                         "fecha_marcado": ap.get("fecha_marcado"),
                         "sede_decidio_no_apelar": ap.get("sede_decidio_no_apelar"),
                     } if ap else None,
@@ -3471,15 +2761,28 @@ def api_reporte_maestro(
                     "estado_apelacion": estados_apel[-1] if estados_apel else "",
                     "perdida": perdida,
                 }
-                rows.append(r)
-    rows.sort(key=lambda x: (x.get("fecha") or "", x.get("local") or "", x.get("codigo") or ""))
-    return {"rows": rows}
+                rows_list.append(r)
+    rows_list.sort(key=lambda x: (x.get("fecha") or "", x.get("local") or "", x.get("codigo") or ""))
+    filter_val = (filter or "").strip().lower()
+    if filter_val:
+        rows_list = [
+            r
+            for r in rows_list
+            if filter_val in (r.get("local") or "").lower()
+            or filter_val in (r.get("codigo") or "").lower()
+            or filter_val in (r.get("canal") or "").lower()
+            or filter_val in (r.get("cliente") or "").lower()
+        ]
+    total_records = len(rows_list)
+    page = rows_list[first : first + rows]
+    return {"rows": page, "totalRecords": total_records}
 
 
 @app.get("/api/orders/{codigo:path}/fotos")
 def api_get_fotos(codigo: str):
-    """Fotos de la orden agrupadas: entrega, apelación (por canal), respuestas."""
-    return _get_fotos_for_codigo(codigo)
+    """Fotos de la orden agrupadas: entrega, apelación (por canal), respuestas. Busca en todas las referencias (codigo integración e identificador unico)."""
+    order = _find_order_by_codigo(codigo)
+    return _get_fotos_for_order(order) if order else _get_fotos_for_codigo(codigo)
 
 
 @app.post("/api/orders/{codigo:path}/fotos")
@@ -3494,7 +2797,8 @@ async def api_upload_fotos(
         raise HTTPException(status_code=400, detail="group debe ser entrega, apelacion o respuestas")
     if not files:
         raise HTTPException(status_code=400, detail="Envía al menos un archivo")
-    base = UPLOADS_DIR / _sanitize_codigo(codigo)
+    cod = (codigo or "").strip().lstrip("#")
+    base = UPLOADS_DIR / _sanitize_codigo(cod)
     if group == "apelacion":
         canal_safe = _sanitize_path(canal) if canal else "general"
         base = base / "apelacion" / canal_safe
@@ -3525,9 +2829,22 @@ async def api_upload_fotos(
     return {"saved": saved, "group": group, "canal": canal or None}
 
 
+def _uploads_base_for_codigo(codigo: str) -> Path:
+    """Carpeta base en uploads para un código. Sin # para URLs. Fallback a carpeta con # si existía antes."""
+    cod = (codigo or "").strip().lstrip("#")
+    base = UPLOADS_DIR / _sanitize_codigo(cod)
+    if base.exists():
+        return base
+    if cod.isdigit():
+        base_alt = UPLOADS_DIR / _sanitize_codigo("#" + cod)
+        if base_alt.exists():
+            return base_alt
+    return base
+
+
 def _foto_path(codigo: str, group: str, path_rest: str) -> Path:
     """Ruta física del archivo de foto. path_rest = filename (entrega/respuestas) o canal/filename (apelacion)."""
-    base = UPLOADS_DIR / _sanitize_codigo(codigo)
+    base = _uploads_base_for_codigo(codigo)
     if group == "apelacion":
         return base / "apelacion" / path_rest
     return base / group / path_rest
@@ -3550,6 +2867,17 @@ def api_delete_foto(codigo: str, group: str, path_rest: str):
         raise HTTPException(status_code=404, detail="Archivo no encontrado")
     path.unlink()
     return {"deleted": path_rest}
+
+
+@app.post("/api/admin/organize-foto-refs")
+def api_organize_foto_refs():
+    """
+    Renombra y organiza carpetas en uploads/: las que están por identificador unico
+    se mueven a la carpeta del código de integración (referencia canónica).
+    Así las fotos que ya tenían carpeta con otra referencia quedan unificadas.
+    """
+    result = _organize_foto_refs()
+    return result
 
 
 def _report_status_payload() -> dict:
@@ -3591,6 +2919,128 @@ def _report_status_payload() -> dict:
         "last_filas": last_filas,
         "interval_seconds": interval,
     }
+
+
+# ---------------------------------------------------------------------------
+# Planillas diarias por sede
+# ---------------------------------------------------------------------------
+
+_PLANILLA_ALLOWED_EXTENSIONS = {
+    ".xlsx", ".xls", ".csv", ".ods", ".pdf", ".png", ".jpg", ".jpeg", ".webp",
+}
+
+
+def _planilla_dir(local_id: str, fecha: str) -> Path:
+    """Directorio donde se guarda la planilla de una sede y fecha."""
+    return PLANILLAS_DIR / _sanitize_path(local_id) / _sanitize_path(fecha)
+
+
+def _planilla_list_files(local_id: str, fecha: str) -> list[dict]:
+    """Devuelve lista de archivos de planilla para una sede y fecha."""
+    d = _planilla_dir(local_id, fecha)
+    if not d.exists():
+        return []
+    files = []
+    for f in sorted(d.iterdir()):
+        if f.is_file() and f.suffix.lower() in _PLANILLA_ALLOWED_EXTENSIONS:
+            stat = f.stat()
+            files.append({"nombre": f.name, "tamanio": stat.st_size, "fecha_subida": stat.st_mtime})
+    return files
+
+
+def _planilla_status(local_id: str, fecha: str) -> dict:
+    """Devuelve estado de las planillas: subida o pendiente, con lista de archivos."""
+    archivos = _planilla_list_files(local_id, fecha)
+    return {"subida": len(archivos) > 0, "archivos": archivos}
+
+
+@app.get("/api/planilla/{local_id}/{fecha}/estado")
+def api_planilla_estado(local_id: str, fecha: str):
+    """Estado de las planillas diarias de una sede (subida o pendiente)."""
+    return _planilla_status(local_id, fecha)
+
+
+@app.post("/api/planilla/{local_id}/{fecha}")
+async def api_planilla_upload(
+    local_id: str,
+    fecha: str,
+    file: UploadFile = File(...),
+):
+    """Sube un archivo de planilla para una sede y fecha (pueden subirse varios)."""
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="El archivo no tiene nombre")
+    ext = Path(file.filename).suffix.lower()
+    if ext not in _PLANILLA_ALLOWED_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Extensión no permitida: {ext}. Usa {', '.join(sorted(_PLANILLA_ALLOWED_EXTENSIONS))}",
+        )
+    content = await file.read()
+    max_size = 50 * 1024 * 1024  # 50 MB
+    if len(content) > max_size:
+        raise HTTPException(status_code=413, detail="Archivo demasiado grande (máx. 50 MB)")
+
+    d = _planilla_dir(local_id, fecha)
+    d.mkdir(parents=True, exist_ok=True)
+
+    safe_name = _sanitize_path(file.filename) or "planilla" + ext
+    dest = d / safe_name
+    dest.write_bytes(content)
+    return {"subida": True, "nombre": safe_name}
+
+
+@app.delete("/api/planilla/{local_id}/{fecha}")
+def api_planilla_delete(
+    local_id: str,
+    fecha: str,
+    nombre: str | None = Query(None, description="Nombre del archivo a eliminar; si se omite, elimina todos"),
+):
+    """Elimina uno o todos los archivos de planilla de una sede para una fecha."""
+    d = _planilla_dir(local_id, fecha)
+    if nombre:
+        safe_name = _sanitize_path(nombre)
+        p = d / safe_name
+        if not p.exists() or not p.is_file():
+            raise HTTPException(status_code=404, detail="Archivo no encontrado")
+        p.unlink()
+        return {"eliminada": True, "nombre": safe_name}
+    # Eliminar todos
+    files = _planilla_list_files(local_id, fecha)
+    if not files:
+        raise HTTPException(status_code=404, detail="No hay planillas para esta sede y fecha")
+    for fi in files:
+        (d / fi["nombre"]).unlink(missing_ok=True)
+    return {"eliminada": True, "count": len(files)}
+
+
+@app.get("/api/planilla/{local_id}/{fecha}/archivo/{nombre}")
+def api_planilla_download(local_id: str, fecha: str, nombre: str):
+    """Descarga un archivo de planilla específico de una sede para una fecha."""
+    safe_name = _sanitize_path(nombre)
+    p = _planilla_dir(local_id, fecha) / safe_name
+    if not p.exists() or not p.is_file():
+        raise HTTPException(status_code=404, detail="Archivo no encontrado")
+    return FileResponse(p, filename=p.name)
+
+
+@app.get("/api/planilla/estado-sedes")
+def api_planilla_estado_sedes(fecha: str = Query(..., description="YYYY-MM-DD")):
+    """
+    Estado de planillas para todas las sedes en una fecha.
+    Devuelve lista [{local_id, local_name, subida, archivos:[{nombre, tamanio, fecha_subida}]}].
+    """
+    locales = _locales_list_for_iteration()
+    result = []
+    for loc in locales:
+        lid = str(loc.get("id", ""))
+        name = loc.get("name", lid)
+        st = _planilla_status(lid, fecha)
+        result.append({
+            "local_id": lid,
+            "local_name": name,
+            **st,
+        })
+    return {"fecha": fecha, "sedes": result}
 
 
 @app.websocket("/report/ws")

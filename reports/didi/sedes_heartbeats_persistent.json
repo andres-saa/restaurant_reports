@@ -1,0 +1,457 @@
+{
+  "5764607714484028278": {
+    "last_seen": 1771646197.3432472,
+    "data": {
+      "shopName": "Salchimonster (Laureles)",
+      "shopId": "5764607714484028278",
+      "contractorId": "5764607535924120886",
+      "isMain": 0,
+      "cityId": "57010100",
+      "countryCode": "CO",
+      "currency": "COP",
+      "timezone": "America/Bogota",
+      "isApiConfirm": false,
+      "logo": "https://img0.didiglobal.com/static/soda_public/do1_J2NfHhVQr7CPewQSkj3R",
+      "timeOffsetInfo": {
+        "timestamp": 1771646196,
+        "offset": -18000
+      },
+      "showBizStatus": 1,
+      "brandId": "5764608546395325775",
+      "shopOnlineStatus": 1,
+      "countyGroupId": "570101000001",
+      "countyId": "57010119",
+      "shopIsBanned": 0,
+      "channel": 0,
+      "pickingMode": 0,
+      "businessType": 1,
+      "businessChannel": [
+        1
+      ],
+      "status": 0,
+      "url": "",
+      "role": 1,
+      "isDKShop": 0
+    }
+  },
+  "5764607870650551872": {
+    "last_seen": 1771702167.139046,
+    "data": {
+      "shopName": "Burger Monster (City U)",
+      "shopId": "5764607870650551872",
+      "contractorId": "5764607535924120886",
+      "isMain": 0,
+      "cityId": "57380100",
+      "countryCode": "CO",
+      "currency": "COP",
+      "timezone": "America/Bogota",
+      "isApiConfirm": false,
+      "logo": "https://img0.didiglobal.com/static/soda_public/do1_Ie1CwTqtbPd396QPUn7U",
+      "timeOffsetInfo": {
+        "timestamp": 1771702166,
+        "offset": -18000
+      },
+      "showBizStatus": 1,
+      "brandId": "5764608813631211986",
+      "shopOnlineStatus": 1,
+      "countyGroupId": "573801000001",
+      "countyId": "57380104",
+      "shopIsBanned": 0,
+      "channel": 0,
+      "pickingMode": 0,
+      "businessType": 1,
+      "businessChannel": [
+        1
+      ],
+      "status": 0,
+      "url": "",
+      "role": 1,
+      "isDKShop": 0
+    }
+  },
+  "5764607903257069379": {
+    "last_seen": 1771702855.5002127,
+    "data": {
+      "shopName": "Salchimonster (City U)",
+      "shopId": "5764607903257069379",
+      "contractorId": "5764607535924120886",
+      "isMain": 0,
+      "cityId": "57380100",
+      "countryCode": "CO",
+      "currency": "COP",
+      "timezone": "America/Bogota",
+      "isApiConfirm": false,
+      "logo": "https://img0.didiglobal.com/static/soda_public/do1_Jmj7MW3FSNwcGJfhGyrY",
+      "timeOffsetInfo": {
+        "timestamp": 1771702584,
+        "offset": -18000
+      },
+      "showBizStatus": 1,
+      "brandId": "5764608546395325775",
+      "shopOnlineStatus": 1,
+      "countyGroupId": "573801000001",
+      "countyId": "57380114",
+      "shopIsBanned": 0,
+      "channel": 0,
+      "pickingMode": 0,
+      "businessType": 1,
+      "businessChannel": [
+        1
+      ],
+      "status": 0,
+      "url": "",
+      "role": 1,
+      "isDKShop": 0
+    }
+  },
+  "5764607627779378477": {
+    "last_seen": 1771610439.5114985,
+    "data": {
+      "shopName": "Salchimonster (Ciudad Montes)",
+      "shopId": "5764607627779378477",
+      "contractorId": "5764607535924120886",
+      "isMain": 0,
+      "cityId": "57380100",
+      "countryCode": "CO",
+      "currency": "COP",
+      "timezone": "America/Bogota",
+      "isApiConfirm": false,
+      "logo": "https://img0.didiglobal.com/static/soda_public/do1_lEuCSm6q3GpcYKYZ2MHT",
+      "timeOffsetInfo": {
+        "timestamp": 1771610438,
+        "offset": -18000
+      },
+      "showBizStatus": 1,
+      "brandId": "5764608546395325775",
+      "shopOnlineStatus": 1,
+      "countyGroupId": "573801000001",
+      "countyId": "57380111",
+      "shopIsBanned": 0,
+      "channel": 0,
+      "pickingMode": 0,
+      "businessType": 1,
+      "businessChannel": [
+        1
+      ],
+      "status": 0,
+      "url": "",
+      "role": 1,
+      "isDKShop": 0
+    }
+  },
+  "5764607906398604867": {
+    "last_seen": 1771629607.9956357,
+    "data": {
+      "shopName": "Burger Monster (Kennedy)",
+      "shopId": "5764607906398604867",
+      "contractorId": "5764607535924120886",
+      "isMain": 0,
+      "cityId": "57380100",
+      "countryCode": "CO",
+      "currency": "COP",
+      "timezone": "America/Bogota",
+      "isApiConfirm": false,
+      "logo": "https://img0.didiglobal.com/static/soda_public/do1_Q14hrH6XkYYaFBsDRq5E",
+      "timeOffsetInfo": {
+        "timestamp": 1771629607,
+        "offset": -18000
+      },
+      "showBizStatus": 1,
+      "brandId": "5764608813631211986",
+      "shopOnlineStatus": 1,
+      "countyGroupId": "573801000001",
+      "countyId": "57380108",
+      "shopIsBanned": 0,
+      "channel": 0,
+      "pickingMode": 0,
+      "businessType": 1,
+      "businessChannel": [
+        1
+      ],
+      "status": 0,
+      "url": "",
+      "role": 1,
+      "isDKShop": 0
+    }
+  },
+  "5764607540516883766": {
+    "last_seen": 1771638911.6075335,
+    "data": {
+      "shopName": "Salchimonster (Kennedy)",
+      "shopId": "5764607540516883766",
+      "contractorId": "5764607535924120886",
+      "isMain": 0,
+      "cityId": "57380100",
+      "countryCode": "CO",
+      "currency": "COP",
+      "timezone": "America/Bogota",
+      "isApiConfirm": false,
+      "logo": "https://img0.didiglobal.com/static/soda_public/do1_B1EzA2RKXC5JNYMGCFmb",
+      "timeOffsetInfo": {
+        "timestamp": 1771638908,
+        "offset": -18000
+      },
+      "showBizStatus": 1,
+      "brandId": "5764608546395325775",
+      "shopOnlineStatus": 1,
+      "countyGroupId": "573801000001",
+      "countyId": "57380108",
+      "shopIsBanned": 0,
+      "channel": 0,
+      "pickingMode": 0,
+      "businessType": 1,
+      "businessChannel": [
+        1
+      ],
+      "status": 0,
+      "url": "",
+      "role": 1,
+      "isDKShop": 0
+    }
+  },
+  "5764607936383684597": {
+    "last_seen": 1771634957.34265,
+    "data": {
+      "shopName": "Salchimonster (Cedritos)",
+      "shopId": "5764607936383684597",
+      "contractorId": "5764607535924120886",
+      "isMain": 0,
+      "cityId": "57380100",
+      "countryCode": "CO",
+      "currency": "COP",
+      "timezone": "America/Bogota",
+      "isApiConfirm": false,
+      "logo": "https://img0.didiglobal.com/static/soda_public/do1_IZqrndgqbub8KfmT21Pm",
+      "timeOffsetInfo": {
+        "timestamp": 1771634956,
+        "offset": -18000
+      },
+      "showBizStatus": 1,
+      "brandId": "5764608546395325775",
+      "shopOnlineStatus": 1,
+      "countyGroupId": "573801000001",
+      "countyId": "57380119",
+      "shopIsBanned": 0,
+      "channel": 0,
+      "pickingMode": 0,
+      "businessType": 1,
+      "businessChannel": [
+        1
+      ],
+      "status": 0,
+      "url": "",
+      "role": 1,
+      "isDKShop": 0
+    }
+  },
+  "5764607682254998348": {
+    "last_seen": 1771814876.0948353,
+    "data": {
+      "brandId": "5764608546395325775",
+      "businessChannel": [
+        1
+      ],
+      "businessType": 1,
+      "channel": 0,
+      "cityId": "57380100",
+      "contractorId": "5764607535924120886",
+      "countryCode": "CO",
+      "countyGroupId": "573801000001",
+      "countyId": "57380107",
+      "currency": "COP",
+      "isApiConfirm": false,
+      "isDKShop": 0,
+      "isMain": 0,
+      "logo": "https://img0.didiglobal.com/static/soda_public/do1_U9jc56ahFD18Vn5IDMrg",
+      "pickingMode": 0,
+      "role": 1,
+      "shopId": "5764607682254998348",
+      "shopIsBanned": 0,
+      "shopName": "Salchimonster (Modelia)",
+      "shopOnlineStatus": 1,
+      "showBizStatus": 1,
+      "status": 0,
+      "timeOffsetInfo": {
+        "offset": -18000,
+        "timestamp": 1771634966
+      },
+      "timezone": "America/Bogota",
+      "url": ""
+    }
+  },
+  "5764607911230443057": {
+    "last_seen": 1771639043.1055222,
+    "data": {
+      "shopName": "Burger Monster (Jamundí)",
+      "shopId": "5764607911230443057",
+      "contractorId": "5764607535924120886",
+      "isMain": 0,
+      "cityId": "57330100",
+      "countryCode": "CO",
+      "currency": "COP",
+      "timezone": "America/Bogota",
+      "isApiConfirm": false,
+      "logo": "https://img0.didiglobal.com/static/soda_public/do1_hhEKm1QGlDT5xxkW3Qz6",
+      "timeOffsetInfo": {
+        "timestamp": 1771639041,
+        "offset": -18000
+      },
+      "showBizStatus": 1,
+      "brandId": "5764608813631211986",
+      "shopOnlineStatus": 1,
+      "countyGroupId": "573301000001",
+      "countyId": "57330102",
+      "shopIsBanned": 0,
+      "channel": 0,
+      "pickingMode": 0,
+      "businessType": 1,
+      "businessChannel": [
+        1
+      ],
+      "status": 0,
+      "url": "",
+      "role": 1,
+      "isDKShop": 0
+    }
+  },
+  "5764608014003473958": {
+    "last_seen": 1771647565.0244122,
+    "data": {
+      "shopName": "Burger Monster (Flora)",
+      "shopId": "5764608014003473958",
+      "contractorId": "5764607535924120886",
+      "isMain": 0,
+      "cityId": "57330100",
+      "countryCode": "CO",
+      "currency": "COP",
+      "timezone": "America/Bogota",
+      "isApiConfirm": false,
+      "logo": "https://img0.didiglobal.com/static/soda_public/do1_3QWsub3TKIR99c9dIWxt",
+      "timeOffsetInfo": {
+        "timestamp": 1771646209,
+        "offset": -18000
+      },
+      "showBizStatus": 1,
+      "brandId": "5764608813631211986",
+      "shopOnlineStatus": 1,
+      "countyGroupId": "573301000001",
+      "countyId": "57330109",
+      "shopIsBanned": 0,
+      "channel": 0,
+      "pickingMode": 0,
+      "businessType": 1,
+      "businessChannel": [
+        1
+      ],
+      "status": 0,
+      "url": "",
+      "role": 1,
+      "isDKShop": 0
+    }
+  },
+  "5764607550243472412": {
+    "last_seen": 1771702156.1185799,
+    "data": {
+      "shopName": "Salchimonster (Bochalema)",
+      "shopId": "5764607550243472412",
+      "contractorId": "5764607535924120886",
+      "isMain": 0,
+      "cityId": "57330100",
+      "countryCode": "CO",
+      "currency": "COP",
+      "timezone": "America/Bogota",
+      "isApiConfirm": false,
+      "logo": "https://img0.didiglobal.com/static/soda_public/do1_DiQhIx9QNPlY6mDnHWjx",
+      "timeOffsetInfo": {
+        "timestamp": 1771702155,
+        "offset": -18000
+      },
+      "showBizStatus": 0,
+      "brandId": "5764608546395325775",
+      "shopOnlineStatus": 5,
+      "countyGroupId": "573301000001",
+      "countyId": "57330105",
+      "shopIsBanned": 0,
+      "channel": 0,
+      "pickingMode": 0,
+      "businessType": 1,
+      "businessChannel": [
+        1
+      ],
+      "status": 0,
+      "url": "",
+      "role": 1,
+      "isDKShop": 0
+    }
+  },
+  "5764607612151399459": {
+    "last_seen": 1771703275.5078194,
+    "data": {
+      "shopName": "Salchimonster (Parque del Perro)",
+      "shopId": "5764607612151399459",
+      "contractorId": "5764607535924120886",
+      "isMain": 0,
+      "cityId": "57330100",
+      "countryCode": "CO",
+      "currency": "COP",
+      "timezone": "America/Bogota",
+      "isApiConfirm": false,
+      "logo": "https://img0.didiglobal.com/static/soda_public/do1_KeU31nSJV9Zjl8rBkQBd",
+      "timeOffsetInfo": {
+        "timestamp": 1771703267,
+        "offset": -18000
+      },
+      "showBizStatus": 0,
+      "brandId": "5764608546395325775",
+      "shopOnlineStatus": 5,
+      "countyGroupId": "573301000001",
+      "countyId": "57330137",
+      "shopIsBanned": 0,
+      "channel": 0,
+      "pickingMode": 0,
+      "businessType": 1,
+      "businessChannel": [
+        1
+      ],
+      "status": 0,
+      "url": "",
+      "role": 1,
+      "isDKShop": 0
+    }
+  },
+  "5764607649610730459": {
+    "last_seen": 1771704055.5499978,
+    "data": {
+      "shopName": "Salchimonster (Suba)",
+      "shopId": "5764607649610730459",
+      "contractorId": "5764607535924120886",
+      "isMain": 0,
+      "cityId": "57380100",
+      "countryCode": "CO",
+      "currency": "COP",
+      "timezone": "America/Bogota",
+      "isApiConfirm": false,
+      "logo": "https://img0.didiglobal.com/static/soda_public/do1_sNmyvb5aA1XmzKrDvFNB",
+      "timeOffsetInfo": {
+        "timestamp": 1771703281,
+        "offset": -18000
+      },
+      "showBizStatus": 1,
+      "brandId": "5764608546395325775",
+      "shopOnlineStatus": 1,
+      "countyGroupId": "573801000001",
+      "countyId": "57380115",
+      "shopIsBanned": 0,
+      "channel": 0,
+      "pickingMode": 0,
+      "businessType": 1,
+      "businessChannel": [
+        1
+      ],
+      "status": 0,
+      "url": "",
+      "role": 1,
+      "isDKShop": 0
+    }
+  }
+}

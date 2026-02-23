@@ -1,0 +1,40 @@
+{
+  "manifest_version": 3,
+  "name": "Didi Food Capture",
+  "version": "1.0.0",
+  "description": "Captura respuestas de getShops y newOrders de Didi Food para enviar al backend.",
+  "permissions": ["storage", "alarms"],
+  "background": {"service_worker": "background.js"},
+  "web_accessible_resources": [{
+    "resources": ["inject.js"],
+    "matches": ["https://didi-food.com/*", "https://b.didi-food.com/*"]
+  }],
+  "host_permissions": [
+    "https://didi-food.com/*",
+    "https://b.didi-food.com/*",
+    "http://localhost:8000/*",
+    "http://127.0.0.1:8000/*",
+    "http://localhost:8009/*",
+    "http://127.0.0.1:8009/*",
+    "https://restaurant.reports.salchimonster.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["https://didi-food.com/*", "https://b.didi-food.com/*"],
+      "js": ["inject.js"],
+      "run_at": "document_start",
+      "world": "MAIN",
+      "all_frames": true
+    },
+    {
+      "matches": ["https://didi-food.com/*", "https://b.didi-food.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_start",
+      "all_frames": true
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Didi Capture"
+  }
+}

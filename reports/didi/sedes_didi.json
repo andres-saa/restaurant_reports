@@ -1,0 +1,13 @@
+[
+  {"restaurant_id": "1", "didi_shop_id": "5764607751733642279", "name_restaurant": "SM Flora", "name_didi": "Salchimonster (Flora)"},
+  {"restaurant_id": "2", "didi_shop_id": "5764607612151399459", "name_restaurant": "La Casa SM Parque Del Perro", "name_didi": "Salchimonster (Parque del Perro)"},
+  {"restaurant_id": "3", "didi_shop_id": "5764607682254998348", "name_restaurant": "SM Modelia", "name_didi": "Salchimonster (Modelia)"},
+  {"restaurant_id": "4", "didi_shop_id": "5764607714484028278", "name_restaurant": "SM Laureles", "name_didi": "Salchimonster (Laureles)"},
+  {"restaurant_id": "5", "didi_shop_id": "5764607627779378477", "name_restaurant": "SM Montes", "name_didi": "Salchimonster (Ciudad Montes)"},
+  {"restaurant_id": "6", "didi_shop_id": "5764607698826692518", "name_restaurant": "SM Jamundi", "name_didi": "Salchimonster (Jamundí)"},
+  {"restaurant_id": "7", "didi_shop_id": "5764607550243472412", "name_restaurant": "SM Bochalema", "name_didi": "Salchimonster (Bochalema)"},
+  {"restaurant_id": "8", "didi_shop_id": "5764607540516883766", "name_restaurant": "SM Kennedy", "name_didi": "Salchimonster (Kennedy)"},
+  {"restaurant_id": "9", "didi_shop_id": "5764607649610730459", "name_restaurant": "SM Suba", "name_didi": "Salchimonster (Suba)"},
+  {"restaurant_id": "11", "didi_shop_id": "5764607903257069379", "name_restaurant": "CITY U", "name_didi": "Salchimonster (City U)"},
+  {"restaurant_id": "13", "didi_shop_id": "5764607936383684597", "name_restaurant": "SM Usaquen", "name_didi": "Salchimonster (Cedritos)"}
+]

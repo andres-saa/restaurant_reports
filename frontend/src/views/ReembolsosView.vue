@@ -15,11 +15,17 @@ import Dialog from 'primevue/dialog'
 
 const API = import.meta.env.VITE_API_URL ?? ''
 
+interface ReembolsoEntry {
+  monto: number
+  fecha: string
+}
 interface ApelacionItem {
   codigo: string
   canal: string
   monto_descontado: number
   monto_devuelto: number
+  total_reembolsado?: number
+  reembolsos?: ReembolsoEntry[]
   fecha_estimada_devolucion?: string
   local?: string
   fecha?: string
@@ -115,7 +121,7 @@ async function confirmReembolsar() {
     const body = {
       codigo: item.codigo,
       mismo_valor: reembolsarMismoValor.value,
-      monto_reembolsado: reembolsarMismoValor.value ? item.monto_devuelto : reembolsarMontoDiferente.value,
+      monto_reembolsado: reembolsarMismoValor.value ? undefined : reembolsarMontoDiferente.value,
       fecha_reembolso: reembolsarFecha.value || todayStr()
     }
     const r = await fetch(`${API}/api/apelaciones/reembolsar`, {
@@ -284,13 +290,19 @@ function formatMonto(val: string | number | null | undefined): string {
           <Column header="Reconocido por canal (a devolver)">
             <template #body="{ data }">{{ formatMonto(data.monto_devuelto) }}</template>
           </Column>
+          <Column header="Ya reembolsado" style="min-width: 140px">
+            <template #body="{ data }">
+              <span v-if="(data.total_reembolsado ?? 0) > 0">{{ formatMonto(data.total_reembolsado) }} de {{ formatMonto(data.monto_devuelto) }}</span>
+              <span v-else class="text-color-secondary">—</span>
+            </template>
+          </Column>
           <Column header="Fecha estimada">
             <template #body="{ data }">{{ data.fecha_estimada_devolucion || '—' }}</template>
           </Column>
           <Column header="Acción">
             <template #body="{ data }">
               <Button
-                label="Marcar reembolsado"
+                :label="(data.reembolsos?.length ?? 0) > 0 ? 'Registrar otro reembolso' : 'Registrar reembolso'"
                 icon="pi pi-check"
                 severity="success"
                 size="small"
@@ -366,12 +378,12 @@ function formatMonto(val: string | number | null | undefined): string {
         </div>
       </template>
       <template #footer>
-        <Button label="Cancelar" severity="secondary" :disabled="reembolsarLoading" @click="closeReembolsarDialog" />
+        <Button label="Cancelar" icon="pi pi-times" severity="secondary" :disabled="reembolsarLoading" @click="closeReembolsarDialog" />
         <Button
-          label="Marcar reembolsado"
+          :label="(reembolsarItem?.reembolsos?.length ?? 0) > 0 ? 'Registrar reembolso' : 'Marcar reembolsado'"
           icon="pi pi-check"
           :loading="reembolsarLoading"
-          :disabled="!reembolsarMismoValor && (reembolsarMontoDiferente == null || reembolsarMontoDiferente < 0)"
+          :disabled="!reembolsarMismoValor && (reembolsarMontoDiferente == null || reembolsarMontoDiferente <= 0)"
           @click="confirmReembolsar"
         />
       </template>
@@ -384,7 +396,7 @@ function formatMonto(val: string | number | null | undefined): string {
   padding: 0.5rem;
 }
 .btn-touch {
-  min-height: 44px;
+
   min-width: 44px;
 }
 </style>

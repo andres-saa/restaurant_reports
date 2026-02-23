@@ -1,0 +1,21 @@
+# Servicio para la app principal Restaurant Reports (report/locales, api/orders, login, etc.)
+# Puerto: 8010 (referenciado por rutinas backend para GET /report/locales)
+# Instalar: sudo cp deploy/restaurant-reports.service /etc/systemd/system/ && sudo systemctl daemon-reload
+# Habilitar e iniciar: sudo systemctl enable restaurant-reports && sudo systemctl start restaurant-reports
+
+[Unit]
+Description=Restaurant Reports API (FastAPI - main app)
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/var/www/restaurant_reports
+Environment="PATH=/var/www/restaurant_reports/venv/bin:/usr/local/bin:/usr/bin:/bin"
+ExecStart=/var/www/restaurant_reports/venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8010
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

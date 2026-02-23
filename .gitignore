@@ -6,6 +6,9 @@ didi_credentials.json
 didi_cookies.json
 didi_new_orders.json
 didi_daily_orders.json
+
+# --- Integración DiDi (archivos movidos a old_didi/, solo referencia) ---
+old_didi/
 .env
 .env.*
 !.env.example

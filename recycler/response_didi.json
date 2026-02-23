@@ -1,0 +1,100 @@
+{
+    "errno": 0,
+    "errmsg": "ok",
+    "requestId": "0a9cb26a6996897c47b8a70368d41202",
+    "time": 1771473276,
+    "msectime": 1771473276672,
+    "data": {
+        "highlight": [],
+        "serving": [
+            {
+                "orderId": "5764660010969792972",
+                "displayNum": "#348036",
+                "orderIndex": 348036,
+                "uid": 369436357927765,
+                "shopId": "5764607682254998348",
+                "displayStatus": 3,
+                "highlight": 0,
+                "orderStatus": 400,
+                "currency": "COP",
+                "deliveryType": 1,
+                "deliveryTypeText": "Entrega de DiDi",
+                "highlightType": 0,
+                "highlightTs": 0,
+                "highlightTsOffsetInfo": {
+                    "timestamp": 0,
+                    "offset": -18000
+                },
+                "itemReadyEta": 1771471855,
+                "itemReadyEtaOffsetInfo": {
+                    "timestamp": 1771471855,
+                    "offset": -18000
+                },
+                "shopConfirmTime": 1771470895,
+                "shopConfirmTimeOffsetInfo": {
+                    "timestamp": 1771470895,
+                    "offset": -18000
+                },
+                "createTime": 1771470891,
+                "createTimeOffsetInfo": {
+                    "timestamp": 1771470891,
+                    "offset": -18000
+                },
+                "updateTime": 1771472589,
+                "updateTimeOffsetInfo": {
+                    "timestamp": 1771472589,
+                    "offset": -18000
+                },
+                "remark": "",
+                "countDownInfo": {
+                    "startTs": {
+                        "timestamp": 0,
+                        "offset": 0
+                    },
+                    "endTs": {
+                        "timestamp": 0,
+                        "offset": 0
+                    },
+                    "countDown": false
+                },
+                "extActions": [],
+                "deliveryStatus": 140,
+                "receiverInfo": {
+                    "name": "Diego"
+                },
+                "orderType": 2,
+                "isPrinted": 1,
+                "displayInfo": {
+                    "tips": "",
+                    "statusText": "Entregando",
+                    "countDown": false,
+                    "tags": [],
+                    "type": 0
+                },
+                "payTag": {
+                    "payType": 1
+                },
+                "payType": 1,
+                "propertyTagList": [],
+                "statusList": [
+                    {
+                        "type": 3,
+                        "text": "Entregando"
+                    }
+                ],
+                "exceptionTagList": [],
+                "afterSalesInfo": null,
+                "isGuideTest": 0
+            }
+        ],
+        "pollingInterval": 30,
+        "count": 1,
+        "isMain": 0,
+        "redirectInfo": {
+            "version": "V3",
+            "ext": {
+                "info": ""
+            }
+        }
+    }
+}

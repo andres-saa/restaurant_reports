@@ -435,7 +435,7 @@ function closePhotoModal() {
         </div>
       </template>
       <template #footer>
-        <Button label="Cancelar" severity="secondary" :disabled="marcaLoading" @click="closeMarcaDialog" />
+        <Button label="Cancelar" icon="pi pi-times" severity="secondary" :disabled="marcaLoading" @click="closeMarcaDialog" />
         <Button
           label="Marcar"
           icon="pi pi-check"
@@ -470,7 +470,6 @@ function closePhotoModal() {
   padding: 0.5rem;
 }
 .btn-touch {
-  min-height: 44px;
   min-width: 44px;
 }
 .fotos-entrega-thumbs {

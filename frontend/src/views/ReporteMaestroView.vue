@@ -57,6 +57,9 @@ const rows = ref<ReporteRow[]>([])
 const loading = ref(false)
 const orderError = ref('')
 const globalFilter = ref('')
+const first = ref(0)
+const pageSize = ref(20)
+const totalRecords = ref(0)
 
 const MIN_DATE = new Date(2026, 1, 11)
 const todayStr = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/Bogota' })
@@ -82,9 +85,6 @@ const localeOptions = computed(() => [
   ...locales.value.map((l) => ({ label: l.name, value: l.name }))
 ])
 
-const tableFilters = computed(() => ({
-  global: { value: globalFilter.value, matchMode: 'contains' as const }
-}))
 
 const estadoLabels: Record<string, string> = {
   pendiente_apelar: 'Pend. apelar',
@@ -128,24 +128,42 @@ function allFotosApelacion(row: ReporteRow): string[] {
   return Object.values(ap).flat()
 }
 
-async function load() {
+async function load(pageFirst?: number, pageRows?: number) {
   if (!fechaDesde.value || !fechaHasta.value) return
   loading.value = true
   orderError.value = ''
+  const skip = pageFirst ?? first.value
+  const limit = pageRows ?? pageSize.value
   try {
     const params = new URLSearchParams()
     if (selectedLocal.value) params.set('local', selectedLocal.value)
     params.set('fecha_desde', fechaDesde.value)
     params.set('fecha_hasta', fechaHasta.value)
+    params.set('first', String(skip))
+    params.set('rows', String(limit))
+    if (globalFilter.value.trim()) params.set('filter', globalFilter.value.trim())
     const r = await fetch(`${API}/api/reporte-maestro?${params.toString()}`)
     const data = await r.json()
     rows.value = data.rows ?? []
+    totalRecords.value = data.totalRecords ?? 0
   } catch (err) {
     orderError.value = (err as Error).message
     rows.value = []
+    totalRecords.value = 0
   } finally {
     loading.value = false
   }
+}
+
+function onPage(event: { first: number; rows: number }) {
+  first.value = event.first
+  pageSize.value = event.rows
+  load(event.first, event.rows)
+}
+
+function applyFilter() {
+  first.value = 0
+  load(0, pageSize.value)
 }
 
 onMounted(async () => {
@@ -165,7 +183,10 @@ onMounted(async () => {
   await load()
 })
 
-watch([selectedLocal, fechaDesde, fechaHasta], () => load())
+watch([selectedLocal, fechaDesde, fechaHasta], () => {
+  first.value = 0
+  load(0, pageSize.value)
+})
 
 const CANAL_LOGOS: Record<string, string> = {
   'Rappi': '/logos/rappi.png',
@@ -272,10 +293,17 @@ const historialEvents = computed(() => buildHistorialEvents(historialRow.value))
             <label>Hasta</label>
             <DatePicker v-model="fechaHastaAsDate" :minDate="MIN_DATE" dateFormat="dd/mm/yy" showIcon />
           </div>
-          <Button label="Cargar" icon="pi pi-refresh" :loading="loading" @click="load" />
+          <Button label="Cargar" icon="pi pi-refresh" :loading="loading" @click="() => load()" />
         </div>
         <div class="mt-2">
-          <input v-model="globalFilter" type="text" placeholder="Filtrar tabla..." class="p-inputtext p-component w-full" />
+          <input
+            v-model="globalFilter"
+            type="text"
+            placeholder="Filtrar por sede, código, canal o cliente..."
+            class="p-inputtext p-component w-full"
+            @keyup.enter="applyFilter"
+          />
+          <Button label="Buscar" icon="pi pi-search" class="mt-2 btn-touch" @click="applyFilter" />
         </div>
       </template>
     </Card>
@@ -283,22 +311,24 @@ const historialEvents = computed(() => buildHistorialEvents(historialRow.value))
     <Message v-if="orderError" severity="error" class="mb-3">{{ orderError }}</Message>
 
     <Card>
-      <template #title>Órdenes ({{ rows.length }})</template>
+      <template #title>Órdenes ({{ totalRecords }})</template>
       <template #content>
         <DataTable
           :value="rows"
           :loading="loading"
           data-key="codigo"
-          :filters="tableFilters"
-          :globalFilterFields="['local', 'codigo', 'canal', 'cliente']"
+          :lazy="true"
+          :totalRecords="totalRecords"
+          :first="first"
+          :rows="pageSize"
           class="p-datatable-sm p-datatable-striped reporte-maestro-table"
           scrollable
           scroll-height="600px"
           :paginator="true"
-          :rows="20"
           :rows-per-page-options="[10, 20, 50, 100]"
           paginator-template="CurrentPageReport FirstPageLink PrevPageLink PageLinks NextPageLink LastPageLink RowsPerPageDropdown"
           current-page-report-template="Mostrando {first} a {last} de {totalRecords} registros — Página {currentPage} de {totalPages}"
+          @page="onPage"
         >
           <Column field="local" header="Sede" frozen sortable />
           <Column field="fecha" header="Fecha" sortable style="min-width: 100px" />
@@ -387,20 +417,20 @@ const historialEvents = computed(() => buildHistorialEvents(historialRow.value))
           </Column>
           <Column header="Estado del descuento a la sede" style="min-width: 160px">
             <template #body="{ data }">
-              <Tag v-if="data.apelacion?.descuento_confirmado && data.perdida > 0" severity="success" value="Descontado" />
+              <Tag v-if="data.perdida > 0 && (data.apelacion?.perdida_restante ?? data.perdida) <= 0" severity="success" value="Descontado" />
               <Tag v-else-if="data.perdida > 0" severity="warn" value="Pendiente" />
               <span v-else class="text-color-secondary">—</span>
             </template>
           </Column>
           <Column header="Descontado a la sede" style="min-width: 120px">
             <template #body="{ data }">
-              <span v-if="data.apelacion?.descuento_confirmado && data.perdida > 0" class="text-green font-semibold">{{ formatMonto(data.perdida) }}</span>
+              <span v-if="(data.apelacion?.total_descuentos_sede ?? 0) > 0" class="text-green font-semibold">{{ formatMonto(data.apelacion.total_descuentos_sede) }}</span>
               <span v-else class="text-color-secondary">—</span>
             </template>
           </Column>
           <Column header="Pérdida empresa" style="min-width: 120px">
             <template #body="{ data }">
-              <span v-if="!data.apelacion?.descuento_confirmado && data.perdida > 0" class="text-red font-semibold">{{ formatMonto(data.perdida) }}</span>
+              <span v-if="(data.apelacion?.perdida_restante ?? data.perdida) > 0" class="text-red font-semibold">{{ formatMonto(data.apelacion?.perdida_restante ?? data.perdida) }}</span>
               <span v-else class="text-color-secondary">—</span>
             </template>
           </Column>

@@ -1,0 +1,20 @@
+# Servicio para la app Didi Capture (didi-extension.salchimonster.com)
+# Instalar: sudo cp deploy/didi-extension.service /etc/systemd/system/ && sudo systemctl daemon-reload
+# Habilitar e iniciar: sudo systemctl enable didi-extension && sudo systemctl start didi-extension
+
+[Unit]
+Description=Didi Extension Capture (dailyOrders)
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/var/www/restaurant_reports
+Environment="PATH=/var/www/restaurant_reports/venv/bin:/usr/local/bin:/usr/bin:/bin"
+ExecStart=/var/www/restaurant_reports/venv/bin/uvicorn app.didi_capture.main:app --host 127.0.0.1 --port 8001
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -3,7 +3,6 @@ import { ref, onMounted, computed } from 'vue'
 import Card from 'primevue/card'
 import ProgressSpinner from 'primevue/progressspinner'
 import Message from 'primevue/message'
-import InputText from 'primevue/inputtext'
 import Button from 'primevue/button'
 
 /** API base URL. En producción si no está definida, usar el backend conocido para no pedir al mismo origen. */
@@ -24,7 +23,7 @@ interface LocaleItem {
 const locales = ref<LocaleItem[]>([])
 const loading = ref(true)
 const error = ref('')
-const filterText = ref('')
+const copiedId = ref<string | null>(null)
 
 /** Origen de la app (fotopedidos.salchimonster.com en producción). */
 const baseUrl = computed(() =>
@@ -37,18 +36,6 @@ const sedeParam = (loc: LocaleItem) => (loc.id ? loc.id : encodeURIComponent(loc
 function linkHoy(loc: LocaleItem): string {
   return `${baseUrl.value}/pedidos/hoy?sede=${sedeParam(loc)}&user`
 }
-
-function linkMisDescuentos(loc: LocaleItem): string {
-  return `${baseUrl.value}/pedidos/mis-descuentos?sede=${sedeParam(loc)}&user`
-}
-
-const filteredLocales = computed(() => {
-  const q = filterText.value.trim().toLowerCase()
-  if (!q) return locales.value
-  return locales.value.filter(
-    (l) => l.name.toLowerCase().includes(q) || (l.id && String(l.id).toLowerCase().includes(q))
-  )
-})
 
 function normalizeLocale(x: LocaleItem | Record<string, unknown> | string): LocaleItem {
   if (typeof x === 'string') {
@@ -106,8 +93,11 @@ async function loadLocales() {
   }
 }
 
-function copyLink(url: string) {
+function copyLink(loc: LocaleItem) {
+  const url = linkHoy(loc)
   navigator.clipboard.writeText(url).catch(() => {})
+  copiedId.value = loc.id || loc.name
+  setTimeout(() => { copiedId.value = null }, 1800)
 }
 
 onMounted(() => loadLocales())
@@ -117,68 +107,50 @@ onMounted(() => loadLocales())
   <div class="links-sedes">
     <Card class="links-sedes-card">
       <template #title>Links sedes</template>
-      <template #subtitle>
-        Enlaces por sede para que el cajero entre directo a Hoy o Mis descuentos.
-      </template>
+      <template #subtitle>Copia el enlace de acceso directo para cada sede.</template>
     </Card>
 
     <div class="links-sedes-body">
       <Message v-if="error" severity="error" class="mb-3">{{ error }}</Message>
 
-        <div v-if="loading" class="links-sedes-loading">
-          <ProgressSpinner style="width: 2.5rem; height: 2.5rem" />
-          <span class="ml-2">Cargando sedes…</span>
-        </div>
-
-        <div v-else>
-          <div class="mb-3">
-          <label for="filter-sedes" class="block mb-1 font-medium">Buscar sede</label>
-          <InputText
-            id="filter-sedes"
-            v-model="filterText"
-            placeholder="Filtrar por nombre o id..."
-            class="w-full"
-          />
-        </div>
-
-        <p v-if="locales.length === 0" class="links-sedes-empty text-color-secondary">
-          No hay sedes cargadas. Comprueba que el backend esté en marcha y que la URL del API (credenciales o .env) sea correcta.
-        </p>
-        <ul v-else class="links-sedes-list">
-          <li v-for="(loc, index) in filteredLocales" :key="loc.id || loc.name || index" class="links-sedes-item">
-            <span class="links-sedes-name">{{ loc.name }}</span>
-            <div class="links-sedes-links">
-              <a :href="linkHoy(loc)" target="_blank" rel="noopener noreferrer" class="links-sedes-link" title="Hoy">Hoy</a>
-              <a :href="linkMisDescuentos(loc)" target="_blank" rel="noopener noreferrer" class="links-sedes-link" title="Mis descuentos">Mis descuentos</a>
-            </div>
-            <Button
-              icon="pi pi-copy"
-              severity="secondary"
-              size="small"
-              text
-              rounded
-              aria-label="Copiar enlace Hoy"
-              @click="copyLink(linkHoy(loc))"
-            />
-          </li>
-        </ul>
-        <p v-if="filteredLocales.length === 0 && locales.length > 0" class="text-color-secondary mt-2">
-          No hay sedes que coincidan con el filtro.
-        </p>
+      <div v-if="loading" class="links-sedes-loading">
+        <ProgressSpinner style="width: 2.5rem; height: 2.5rem" />
+        <span class="ml-2">Cargando sedes…</span>
       </div>
+
+      <p v-else-if="locales.length === 0" class="links-sedes-empty">
+        No hay sedes cargadas.
+      </p>
+
+      <ul v-else class="links-sedes-list">
+        <li
+          v-for="(loc, index) in locales"
+          :key="loc.id || loc.name || index"
+          class="links-sedes-item"
+        >
+          <span class="links-sedes-name">{{ loc.name }}</span>
+          <Button
+            :icon="copiedId === (loc.id || loc.name) ? 'pi pi-check' : 'pi pi-copy'"
+            :label="copiedId === (loc.id || loc.name) ? 'Copiado' : 'Copiar'"
+            :severity="copiedId === (loc.id || loc.name) ? 'success' : 'secondary'"
+            size="small"
+            outlined
+            @click="copyLink(loc)"
+          />
+        </li>
+      </ul>
     </div>
   </div>
 </template>
 
 <style scoped>
 .links-sedes {
-  max-width: 48rem;
+  max-width: 36rem;
   margin: 0 auto;
 }
 .links-sedes-body {
-  min-height: 2rem;
   margin-top: 0;
-  padding: 1rem 1.25rem;
+  padding: .5rem 1.25rem .75rem;
   background: var(--p-content-background);
   border: 1px solid var(--p-content-border-color);
   border-radius: var(--p-border-radius);
@@ -191,8 +163,9 @@ onMounted(() => loadLocales())
   padding: 1.5rem 0;
 }
 .links-sedes-empty {
-  margin-top: 0.5rem;
-  padding: 0.5rem 0;
+  padding: .75rem 0;
+  color: var(--p-text-muted-color);
+  font-size: .9rem;
 }
 .links-sedes-list {
   list-style: none;
@@ -202,29 +175,16 @@ onMounted(() => loadLocales())
 .links-sedes-item {
   display: flex;
   align-items: center;
-  gap: 0.5rem 1rem;
-  padding: 0.75rem 0;
+  justify-content: space-between;
+  gap: .75rem;
+  padding: .65rem 0;
   border-bottom: 1px solid var(--p-content-border-color);
-  flex-wrap: wrap;
-}
-.links-sedes-links {
-  display: flex;
-  gap: 0.5rem 1rem;
-  flex-wrap: wrap;
 }
 .links-sedes-item:last-child {
   border-bottom: none;
 }
 .links-sedes-name {
   font-weight: 500;
-  min-width: 10rem;
-}
-.links-sedes-link {
-  font-size: 0.875rem;
-  color: var(--p-primary-color);
-  text-decoration: none;
-}
-.links-sedes-link:hover {
-  text-decoration: underline;
+  font-size: .95rem;
 }
 </style>

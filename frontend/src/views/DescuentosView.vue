@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
-import { useConfirm } from 'primevue/useconfirm'
 import Select from 'primevue/select'
 import DatePicker from 'primevue/datepicker'
 import Button from 'primevue/button'
@@ -8,6 +7,8 @@ import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
 import Card from 'primevue/card'
 import Checkbox from 'primevue/checkbox'
+import InputNumber from 'primevue/inputnumber'
+import InputText from 'primevue/inputtext'
 import Tag from 'primevue/tag'
 import Message from 'primevue/message'
 import ProgressSpinner from 'primevue/progressspinner'
@@ -16,6 +17,11 @@ import Timeline from 'primevue/timeline'
 
 const API = import.meta.env.VITE_API_URL ?? ''
 
+interface DescuentoQuincena {
+  monto: number
+  quincena: string
+  fecha: string
+}
 interface DescuentoItem {
   codigo: string
   canal: string
@@ -26,6 +32,9 @@ interface DescuentoItem {
   monto_reembolsado?: number
   reembolsado?: boolean
   perdida: number
+  perdida_restante?: number
+  total_descuentos_sede?: number
+  descuentos?: DescuentoQuincena[]
   descuento_confirmado?: boolean
   fecha_descuento_confirmado?: string
   sede_decidio_no_apelar?: boolean
@@ -48,8 +57,11 @@ const items = ref<DescuentoItem[]>([])
 const loading = ref(false)
 const orderError = ref('')
 const confirmingCodigo = ref<string | null>(null)
-const confirm = useConfirm()
-
+const descuentoDialogVisible = ref(false)
+const descuentoDialogItem = ref<DescuentoItem | null>(null)
+const descuentoMonto = ref<number | null>(null)
+const descuentoQuincena = ref('')
+const descuentoLoading = ref(false)
 const MIN_DATE = new Date(2026, 1, 11)
 const todayStr = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/Bogota' })
 function lastTwoWeeksRange(): { desde: string; hasta: string } {
@@ -94,36 +106,50 @@ async function loadDescuentos() {
   }
 }
 
-function solicitarConfirmarDescuento(item: DescuentoItem) {
-  confirm.require({
-    message: `¿Confirmar que ya se descontó en nómina a la sede "${item.local || '—'}" la pérdida de ${formatMonto(item.perdida)} por el pedido ${item.codigo}?`,
-    header: 'Confirmar descuento',
-    icon: 'pi pi-exclamation-triangle',
-    rejectLabel: 'Cancelar',
-    acceptLabel: 'Confirmar',
-    acceptClass: 'p-button-success',
-    accept: () => confirmarDescuento(item)
-  })
+function openDescuentoDialog(item: DescuentoItem) {
+  descuentoDialogItem.value = item
+  descuentoMonto.value = (item.perdida_restante ?? item.perdida) > 0 ? (item.perdida_restante ?? item.perdida) : item.perdida
+  descuentoQuincena.value = ''
+  descuentoDialogVisible.value = true
 }
 
-async function confirmarDescuento(item: DescuentoItem) {
-  confirmingCodigo.value = item.codigo
+function closeDescuentoDialog() {
+  descuentoDialogVisible.value = false
+  descuentoDialogItem.value = null
+  descuentoMonto.value = null
+  descuentoQuincena.value = ''
+}
+
+async function confirmarDescuento() {
+  const item = descuentoDialogItem.value
+  if (!item) return
+  const monto = descuentoMonto.value ?? 0
+  if (monto <= 0) {
+    orderError.value = 'Indica el monto descontado en esta quincena'
+    return
+  }
+  descuentoLoading.value = true
   orderError.value = ''
   try {
     const r = await fetch(`${API}/api/apelaciones/confirmar-descuento`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ codigo: item.codigo })
+      body: JSON.stringify({
+        codigo: item.codigo,
+        monto,
+        quincena: descuentoQuincena.value.trim() || undefined
+      })
     })
     if (!r.ok) {
       const err = await r.json().catch(() => ({}))
       throw new Error(err.detail || 'Error al confirmar')
     }
+    closeDescuentoDialog()
     await loadDescuentos()
   } catch (e) {
     orderError.value = (e as Error).message
   } finally {
-    confirmingCodigo.value = null
+    descuentoLoading.value = false
   }
 }
 
@@ -199,13 +225,19 @@ function buildHistorialEvents(item: DescuentoItem | null): HistorialEvent[] {
   if (item.sede_decidio_no_apelar) {
     events.push({ status: 'La sede decidió no apelar', date: '—', icon: 'pi pi-times-circle', color: '#64748b' })
   }
+  if (item.descuentos?.length) {
+    for (const d of item.descuentos) {
+      const quincenaLabel = d.quincena ? ` (quincena ${d.quincena})` : ''
+      events.push({ status: `Descontado a la sede: ${formatMonto(d.monto)}${quincenaLabel}`, date: formatFechaIso(d.fecha), icon: 'pi pi-wallet', color: '#16a34a' })
+    }
+  }
   if (item.fecha_apelado) {
     events.push({ status: 'Apelado', date: formatFechaIso(item.fecha_apelado), icon: 'pi pi-send', color: '#3b82f6' })
   }
   if (item.reembolsado || item.fecha_reembolso) {
     events.push({ status: 'Reembolsado', date: formatFechaIso(item.fecha_reembolso), icon: 'pi pi-wallet', color: '#22c55e' })
   }
-  if (item.descuento_confirmado) {
+  if (item.descuento_confirmado && !(item.descuentos?.length)) {
     events.push({ status: 'Descontado a la sede', date: item.fecha_descuento_confirmado || '—', icon: 'pi pi-check-circle', color: '#16a34a' })
   }
   return events
@@ -359,16 +391,17 @@ const totalPerdida = computed(() =>
           <Column header="Acción">
             <template #body="{ data }">
               <Button
-                v-if="!data.descuento_confirmado"
-                label="Confirmar descuento en nómina"
+                v-if="(data.perdida_restante ?? data.perdida) > 0"
+                :label="(data.descuentos?.length ?? 0) > 0 ? 'Registrar descuento (quincena)' : 'Confirmar descuento (quincena)'"
                 icon="pi pi-check"
                 severity="success"
                 size="small"
                 class="btn-touch"
                 :loading="confirmingCodigo === data.codigo"
-                @click="solicitarConfirmarDescuento(data)"
+                @click="openDescuentoDialog(data)"
               />
-              <span v-else class="text-green text-sm"><i class="pi pi-check-circle"></i> Confirmado</span>
+              <span v-else-if="data.perdida > 0" class="text-green text-sm"><i class="pi pi-check-circle"></i> Confirmado</span>
+              <span v-else>—</span>
             </template>
           </Column>
           <template #empty>
@@ -380,6 +413,49 @@ const totalPerdida = computed(() =>
         </DataTable>
       </template>
     </Card>
+
+    <Dialog
+      v-model:visible="descuentoDialogVisible"
+      modal
+      header="Registrar descuento por quincena"
+      :closable="!descuentoLoading"
+      @hide="closeDescuentoDialog"
+    >
+      <template #default>
+        <div v-if="descuentoDialogItem" class="mb-3">
+          <p><strong>Pedido:</strong> {{ descuentoDialogItem.codigo }}</p>
+          <p><strong>Sede:</strong> {{ descuentoDialogItem.local || '—' }}</p>
+          <p><strong>Pérdida total:</strong> {{ formatMonto(descuentoDialogItem.perdida) }}</p>
+          <p v-if="(descuentoDialogItem.total_descuentos_sede ?? 0) > 0"><strong>Ya descontado:</strong> {{ formatMonto(descuentoDialogItem.total_descuentos_sede) }} — Pendiente: {{ formatMonto(descuentoDialogItem.perdida_restante ?? 0) }}</p>
+        </div>
+        <div class="flex flex-column gap-3">
+          <div>
+            <label class="block mb-1">Monto descontado en esta quincena (COP)</label>
+            <InputNumber
+              v-model="descuentoMonto"
+              mode="currency"
+              currency="COP"
+              locale="es-CO"
+              :min-fraction-digits="0"
+              :max-fraction-digits="0"
+              class="w-full"
+            />
+          </div>
+          <div>
+            <label class="block mb-1">Quincena (ej: 2026-02-1 primera quincena feb, 2026-02-2 segunda)</label>
+            <InputText
+              v-model="descuentoQuincena"
+              placeholder="2026-02-1 o Feb 2026 - 1ra"
+              class="w-full"
+            />
+          </div>
+        </div>
+      </template>
+      <template #footer>
+        <Button label="Cancelar" icon="pi pi-times" severity="secondary" :disabled="descuentoLoading" @click="closeDescuentoDialog" />
+        <Button label="Registrar descuento" icon="pi pi-check" :loading="descuentoLoading" :disabled="(descuentoMonto ?? 0) <= 0" @click="confirmarDescuento" />
+      </template>
+    </Dialog>
 
     <Dialog
       v-model:visible="historialVisible"

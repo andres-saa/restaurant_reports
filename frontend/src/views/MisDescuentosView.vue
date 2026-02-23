@@ -112,7 +112,6 @@ watch(selectedSede, () => {
 
 const CANAL_LOGOS: Record<string, string> = {
   'Rappi': '/logos/rappi.png',
-  'Didi Food': '/logos/didi.png',
   'Menú Online': '/logos/menu_online.png'
 }
 function canalLogoUrl(canal: string | undefined): string | null {

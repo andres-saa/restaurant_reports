@@ -1,0 +1,641 @@
+{
+  "items": [
+    {
+      "codigo": "2429078316",
+      "canal": "Rappi",
+      "delivery_id": "216246",
+      "monto_descontado": 26526.0,
+      "monto_devuelto": null,
+      "fecha_marcado": "2026-02-19T18:27:41.940069-05:00",
+      "fecha_apelado": null,
+      "local": "SM Bochalema",
+      "fecha": "2026-02-14"
+    },
+    {
+      "codigo": "2428670308",
+      "canal": "Rappi",
+      "delivery_id": "215559",
+      "monto_descontado": 47560.0,
+      "monto_devuelto": null,
+      "fecha_marcado": "2026-02-19T18:29:40.561934-05:00",
+      "fecha_apelado": null,
+      "local": "SM Bochalema",
+      "fecha": "2026-02-13"
+    },
+    {
+      "codigo": "2429494836",
+      "canal": "Rappi",
+      "delivery_id": "217100",
+      "monto_descontado": 40050.0,
+      "monto_devuelto": null,
+      "fecha_marcado": "2026-02-20T08:43:29.487209-05:00",
+      "fecha_apelado": null,
+      "local": "CITY U",
+      "fecha": "2026-02-15"
+    },
+    {
+      "codigo": "2429466175",
+      "canal": "Rappi",
+      "delivery_id": "216999",
+      "monto_descontado": 14525.0,
+      "monto_devuelto": null,
+      "fecha_marcado": "2026-02-20T08:43:59.622387-05:00",
+      "fecha_apelado": null,
+      "local": "CITY U",
+      "fecha": "2026-02-15"
+    },
+    {
+      "codigo": "UNI-2673",
+      "canal": "Menú Online",
+      "delivery_id": "211958",
+      "monto_descontado": 13.0,
+      "monto_devuelto": 12.0,
+      "fecha_marcado": "2026-02-20T12:23:48.700554-05:00",
+      "fecha_apelado": "2026-02-20T12:24:35.325906-05:00",
+      "local": "SM NEW JERSEY",
+      "fecha": "2026-02-07",
+      "fecha_estimada_devolucion": "2026-02-04",
+      "reembolsos": [
+        {
+          "monto": 12.0,
+          "fecha": "2026-02-20"
+        }
+      ],
+      "reembolsado": true,
+      "fecha_reembolso": "2026-02-20",
+      "monto_reembolsado": 12.0
+    },
+    {
+      "codigo": "UNI-2671",
+      "canal": "Menú Online",
+      "delivery_id": "211902",
+      "monto_descontado": 34.0,
+      "monto_devuelto": 12.0,
+      "fecha_marcado": "2026-02-20T12:23:51.979493-05:00",
+      "fecha_apelado": "2026-02-21T13:56:41.865222-05:00",
+      "local": "SM NEW JERSEY",
+      "fecha": "2026-02-07",
+      "fecha_estimada_devolucion": "2026-02-28"
+    },
+    {
+      "codigo": "NYK-2184",
+      "canal": "Menú Online",
+      "delivery_id": "211882",
+      "monto_descontado": 32.0,
+      "monto_devuelto": 2.0,
+      "fecha_marcado": "2026-02-20T12:23:55.264289-05:00",
+      "fecha_apelado": "2026-02-20T12:43:44.469698-05:00",
+      "local": "SM NEW JERSEY",
+      "fecha": "2026-02-07",
+      "fecha_estimada_devolucion": "2026-02-13",
+      "reembolsos": [
+        {
+          "monto": 1.0,
+          "fecha": "2026-02-20"
+        }
+      ],
+      "reembolsado": false,
+      "fecha_reembolso": "2026-02-20",
+      "monto_reembolsado": 1.0
+    },
+    {
+      "codigo": "NYK-2260",
+      "canal": "Menú Online",
+      "delivery_id": "219588",
+      "monto_descontado": 2.0,
+      "monto_devuelto": 2.0,
+      "fecha_marcado": "2026-02-20T12:44:51.196701-05:00",
+      "fecha_apelado": "2026-02-21T14:03:47.150611-05:00",
+      "local": "SM NEW JERSEY",
+      "fecha": "2026-02-19",
+      "fecha_estimada_devolucion": "2026-02-21",
+      "reembolsos": [
+        {
+          "monto": 2.0,
+          "fecha": "2026-02-21"
+        }
+      ],
+      "reembolsado": true,
+      "fecha_reembolso": "2026-02-21",
+      "monto_reembolsado": 2.0
+    },
+    {
+      "codigo": "UNI-2809",
+      "canal": "Menú Online",
+      "delivery_id": "219275",
+      "monto_descontado": 3.0,
+      "monto_devuelto": 23.0,
+      "fecha_marcado": "2026-02-20T12:44:55.121584-05:00",
+      "fecha_apelado": "2026-02-20T12:45:06.074902-05:00",
+      "local": "SM NEW JERSEY",
+      "fecha": "2026-02-19",
+      "fecha_estimada_devolucion": "2026-02-21",
+      "reembolsos": [
+        {
+          "monto": 23.0,
+          "fecha": "2026-02-20"
+        }
+      ],
+      "reembolsado": true,
+      "fecha_reembolso": "2026-02-20",
+      "monto_reembolsado": 23.0
+    },
+    {
+      "codigo": "UNI-2672",
+      "canal": "Menú Online",
+      "delivery_id": "211950",
+      "monto_descontado": 10.0,
+      "monto_devuelto": 5.0,
+      "fecha_marcado": "2026-02-20T14:14:25.233361-05:00",
+      "fecha_apelado": "2026-02-20T14:15:09.535447-05:00",
+      "local": "SM NEW JERSEY",
+      "fecha": "2026-02-07",
+      "fecha_estimada_devolucion": "2026-02-27"
+    },
+    {
+      "codigo": "UNI-2765",
+      "canal": "Menú Online",
+      "delivery_id": "216502",
+      "monto_descontado": 30.0,
+      "monto_devuelto": 20.0,
+      "fecha_marcado": "2026-02-20T14:16:38.412495-05:00",
+      "fecha_apelado": "2026-02-20T14:17:17.651175-05:00",
+      "local": "SM NEW JERSEY",
+      "fecha": "2026-02-19",
+      "fecha_estimada_devolucion": "2026-02-20",
+      "descuentos": [
+        {
+          "monto": 10.0,
+          "quincena": "2026-02-01",
+          "fecha": "2026-02-20"
+        }
+      ],
+      "descuento_confirmado": false,
+      "fecha_descuento_confirmado": "2026-02-20",
+      "reembolsos": [
+        {
+          "monto": 20.0,
+          "fecha": "2026-02-20"
+        }
+      ],
+      "reembolsado": true,
+      "fecha_reembolso": "2026-02-20",
+      "monto_reembolsado": 20.0
+    },
+    {
+      "codigo": "2428626901",
+      "canal": "Rappi",
+      "delivery_id": "215374",
+      "monto_descontado": 38820.0,
+      "monto_devuelto": null,
+      "fecha_marcado": "2026-02-20T16:59:21.809505-05:00",
+      "fecha_apelado": null,
+      "local": "SM Laureles",
+      "fecha": "2026-02-13"
+    },
+    {
+      "codigo": "2428314344",
+      "canal": "Rappi",
+      "delivery_id": "214937",
+      "monto_descontado": 5080.0,
+      "monto_devuelto": null,
+      "fecha_marcado": "2026-02-20T17:00:31.249869-05:00",
+      "fecha_apelado": null,
+      "local": "La Casa SM Parque Del Perro",
+      "fecha": "2026-02-12"
+    },
+    {
+      "codigo": "2428627089",
+      "canal": "Rappi",
+      "delivery_id": "215375",
+      "monto_descontado": 51600.0,
+      "monto_devuelto": null,
+      "fecha_marcado": "2026-02-20T17:01:55.922714-05:00",
+      "fecha_apelado": null,
+      "local": "SM Usaquen",
+      "fecha": "2026-02-13"
+    },
+    {
+      "codigo": "2428846772",
+      "canal": "Rappi",
+      "delivery_id": "215741",
+      "monto_descontado": 61000.0,
+      "monto_devuelto": null,
+      "fecha_marcado": "2026-02-21T08:29:54.180687-05:00",
+      "fecha_apelado": null,
+      "local": "CITY U",
+      "fecha": "2026-02-14"
+    },
+    {
+      "codigo": "2428869256",
+      "canal": "Rappi",
+      "delivery_id": "215760",
+      "monto_descontado": 13600.0,
+      "monto_devuelto": null,
+      "fecha_marcado": "2026-02-21T08:30:09.291606-05:00",
+      "fecha_apelado": null,
+      "local": "CITY U",
+      "fecha": "2026-02-14"
+    },
+    {
+      "codigo": "2428928956",
+      "canal": "Rappi",
+      "delivery_id": "215826",
+      "monto_descontado": 30800.0,
+      "monto_devuelto": null,
+      "fecha_marcado": "2026-02-21T08:30:20.691336-05:00",
+      "fecha_apelado": null,
+      "local": "CITY U",
+      "fecha": "2026-02-14"
+    },
+    {
+      "codigo": "2428999179",
+      "canal": "Rappi",
+      "delivery_id": "215965",
+      "monto_descontado": 50550.0,
+      "monto_devuelto": null,
+      "fecha_marcado": "2026-02-21T08:30:36.257684-05:00",
+      "fecha_apelado": null,
+      "local": "CITY U",
+      "fecha": "2026-02-14"
+    },
+    {
+      "codigo": "2429073654",
+      "canal": "Rappi",
+      "delivery_id": "216224",
+      "monto_descontado": 33900.0,
+      "monto_devuelto": null,
+      "fecha_marcado": "2026-02-21T08:30:47.825965-05:00",
+      "fecha_apelado": null,
+      "local": "CITY U",
+      "fecha": "2026-02-14"
+    },
+    {
+      "codigo": "2429076476",
+      "canal": "Rappi",
+      "delivery_id": "216236",
+      "monto_descontado": 22700.0,
+      "monto_devuelto": 16500.0,
+      "fecha_marcado": "2026-02-21T08:34:26.840898-05:00",
+      "fecha_apelado": "2026-02-21T17:07:08.424590-05:00",
+      "local": "SM Flora",
+      "fecha": "2026-02-14",
+      "fecha_estimada_devolucion": "2026-02-28"
+    },
+    {
+      "codigo": "2429126786",
+      "canal": "Rappi",
+      "delivery_id": "216550",
+      "monto_descontado": 80100.0,
+      "monto_devuelto": 18800.0,
+      "fecha_marcado": "2026-02-21T08:34:43.916668-05:00",
+      "fecha_apelado": "2026-02-21T17:15:01.335423-05:00",
+      "local": "SM Flora",
+      "fecha": "2026-02-14",
+      "fecha_estimada_devolucion": "2026-02-28"
+    },
+    {
+      "codigo": "2429453983",
+      "canal": "Rappi",
+      "delivery_id": "216952",
+      "monto_descontado": 61500.0,
+      "monto_devuelto": null,
+      "fecha_marcado": "2026-02-21T08:34:59.825096-05:00",
+      "fecha_apelado": null,
+      "local": "SM Flora",
+      "fecha": "2026-02-15"
+    },
+    {
+      "codigo": "2429276267",
+      "canal": "Rappi",
+      "delivery_id": "216640",
+      "monto_descontado": 12250.0,
+      "monto_devuelto": null,
+      "fecha_marcado": "2026-02-21T08:40:34.650372-05:00",
+      "fecha_apelado": null,
+      "local": "SM Kennedy",
+      "fecha": "2026-02-15"
+    },
+    {
+      "codigo": "2428933406",
+      "canal": "Rappi",
+      "delivery_id": "215837",
+      "monto_descontado": 25850.0,
+      "monto_devuelto": null,
+      "fecha_marcado": "2026-02-21T08:44:15.894227-05:00",
+      "fecha_apelado": null,
+      "local": "SM Modelia",
+      "fecha": "2026-02-14"
+    },
+    {
+      "codigo": "2429502869",
+      "canal": "Rappi",
+      "delivery_id": "217143",
+      "monto_descontado": 49050.0,
+      "monto_devuelto": null,
+      "fecha_marcado": "2026-02-21T08:44:27.888782-05:00",
+      "fecha_apelado": null,
+      "local": "SM Modelia",
+      "fecha": "2026-02-15"
+    },
+    {
+      "codigo": "2428572712",
+      "canal": "Rappi",
+      "delivery_id": "215185",
+      "monto_descontado": 6970.0,
+      "monto_devuelto": null,
+      "fecha_marcado": "2026-02-21T08:56:09.566108-05:00",
+      "fecha_apelado": null,
+      "local": "SM Montes",
+      "fecha": "2026-02-13"
+    },
+    {
+      "codigo": "2428986718",
+      "canal": "Rappi",
+      "delivery_id": "215932",
+      "monto_descontado": 87600.0,
+      "monto_devuelto": null,
+      "fecha_marcado": "2026-02-21T08:56:20.963729-05:00",
+      "fecha_apelado": null,
+      "local": "SM Montes",
+      "fecha": "2026-02-14"
+    },
+    {
+      "codigo": "2429478077",
+      "canal": "Rappi",
+      "delivery_id": "217031",
+      "monto_descontado": 16400.0,
+      "monto_devuelto": null,
+      "fecha_marcado": "2026-02-21T08:56:31.615072-05:00",
+      "fecha_apelado": null,
+      "local": "SM Montes",
+      "fecha": "2026-02-15"
+    },
+    {
+      "codigo": "2427959718",
+      "canal": "Rappi",
+      "delivery_id": "214143",
+      "monto_descontado": 9160.0,
+      "monto_devuelto": 0.0,
+      "fecha_marcado": "2026-02-21T08:58:30.018911-05:00",
+      "fecha_apelado": "2026-02-21T17:33:33.592694-05:00",
+      "local": "La Casa SM Parque Del Perro",
+      "fecha": "2026-02-11",
+      "fecha_estimada_devolucion": "2026-02-21"
+    },
+    {
+      "codigo": "2427976628",
+      "canal": "Rappi",
+      "delivery_id": "214195",
+      "monto_descontado": 29400.0,
+      "monto_devuelto": 0.0,
+      "fecha_marcado": "2026-02-21T08:58:51.517793-05:00",
+      "fecha_apelado": "2026-02-21T17:46:44.676011-05:00",
+      "local": "La Casa SM Parque Del Perro",
+      "fecha": "2026-02-11",
+      "fecha_estimada_devolucion": "2026-02-21"
+    },
+    {
+      "codigo": "2428298843",
+      "canal": "Rappi",
+      "delivery_id": "214819",
+      "monto_descontado": 21600.0,
+      "monto_devuelto": null,
+      "fecha_marcado": "2026-02-21T08:59:09.884481-05:00",
+      "fecha_apelado": null,
+      "local": "La Casa SM Parque Del Perro",
+      "fecha": "2026-02-12"
+    },
+    {
+      "codigo": "2428616964",
+      "canal": "Rappi",
+      "delivery_id": "215329",
+      "monto_descontado": 4970.0,
+      "monto_devuelto": null,
+      "fecha_marcado": "2026-02-21T08:59:20.001654-05:00",
+      "fecha_apelado": null,
+      "local": "La Casa SM Parque Del Perro",
+      "fecha": "2026-02-13"
+    },
+    {
+      "codigo": "2428637401",
+      "canal": "Rappi",
+      "delivery_id": "215413",
+      "monto_descontado": 4990.0,
+      "monto_devuelto": null,
+      "fecha_marcado": "2026-02-21T08:59:33.940418-05:00",
+      "fecha_apelado": null,
+      "local": "La Casa SM Parque Del Perro",
+      "fecha": "2026-02-13"
+    },
+    {
+      "codigo": "2428572227",
+      "canal": "Rappi",
+      "delivery_id": "215183",
+      "monto_descontado": 9980.0,
+      "monto_devuelto": null,
+      "fecha_marcado": "2026-02-21T08:59:54.112623-05:00",
+      "fecha_apelado": null,
+      "local": "La Casa SM Parque Del Perro",
+      "fecha": "2026-02-13"
+    },
+    {
+      "codigo": "2429494736",
+      "canal": "Rappi",
+      "delivery_id": "217099",
+      "monto_descontado": 13600.0,
+      "monto_devuelto": null,
+      "fecha_marcado": "2026-02-21T09:00:06.945294-05:00",
+      "fecha_apelado": null,
+      "local": "La Casa SM Parque Del Perro",
+      "fecha": "2026-02-15"
+    },
+    {
+      "codigo": "2428929486",
+      "canal": "Rappi",
+      "delivery_id": "215827",
+      "monto_descontado": 36600.0,
+      "monto_devuelto": null,
+      "fecha_marcado": "2026-02-21T09:02:13.389624-05:00",
+      "fecha_apelado": null,
+      "local": "SM Suba",
+      "fecha": "2026-02-14"
+    },
+    {
+      "codigo": "2429108326",
+      "canal": "Rappi",
+      "delivery_id": "216424",
+      "monto_descontado": 26520.0,
+      "monto_devuelto": null,
+      "fecha_marcado": "2026-02-21T09:02:25.721578-05:00",
+      "fecha_apelado": null,
+      "local": "SM Suba",
+      "fecha": "2026-02-14"
+    },
+    {
+      "codigo": "2429107214",
+      "canal": "Rappi",
+      "delivery_id": "216413",
+      "monto_descontado": 6900.0,
+      "monto_devuelto": null,
+      "fecha_marcado": "2026-02-21T09:02:37.826497-05:00",
+      "fecha_apelado": null,
+      "local": "SM Suba",
+      "fecha": "2026-02-14"
+    },
+    {
+      "codigo": "2429067347",
+      "canal": "Rappi",
+      "delivery_id": "216199",
+      "monto_descontado": 64450.0,
+      "monto_devuelto": null,
+      "fecha_marcado": "2026-02-21T09:02:48.856137-05:00",
+      "fecha_apelado": null,
+      "local": "SM Suba",
+      "fecha": "2026-02-14"
+    },
+    {
+      "codigo": "2428920252",
+      "canal": "Rappi",
+      "delivery_id": "215819",
+      "monto_descontado": 18050.0,
+      "monto_devuelto": null,
+      "fecha_marcado": "2026-02-21T09:05:18.268448-05:00",
+      "fecha_apelado": null,
+      "local": "SM Usaquen",
+      "fecha": "2026-02-14"
+    },
+    {
+      "codigo": "2428935205",
+      "canal": "Rappi",
+      "delivery_id": "215841",
+      "monto_descontado": 19630.0,
+      "monto_devuelto": null,
+      "fecha_marcado": "2026-02-21T09:05:31.810438-05:00",
+      "fecha_apelado": null,
+      "local": "SM Usaquen",
+      "fecha": "2026-02-14"
+    },
+    {
+      "codigo": "2428992494",
+      "canal": "Rappi",
+      "delivery_id": "215948",
+      "monto_descontado": 12250.0,
+      "monto_devuelto": null,
+      "fecha_marcado": "2026-02-21T09:05:42.971188-05:00",
+      "fecha_apelado": null,
+      "local": "SM Usaquen",
+      "fecha": "2026-02-14"
+    },
+    {
+      "codigo": "2429033341",
+      "canal": "Rappi",
+      "delivery_id": "216082",
+      "monto_descontado": 4200.0,
+      "monto_devuelto": null,
+      "fecha_marcado": "2026-02-21T09:05:56.997227-05:00",
+      "fecha_apelado": null,
+      "local": "SM Usaquen",
+      "fecha": "2026-02-14"
+    },
+    {
+      "codigo": "2429037641",
+      "canal": "Rappi",
+      "delivery_id": "216099",
+      "monto_descontado": 91900.0,
+      "monto_devuelto": null,
+      "fecha_marcado": "2026-02-21T09:06:12.992932-05:00",
+      "fecha_apelado": null,
+      "local": "SM Usaquen",
+      "fecha": "2026-02-14"
+    },
+    {
+      "codigo": "2429088866",
+      "canal": "Rappi",
+      "delivery_id": "216301",
+      "monto_descontado": 90950.0,
+      "monto_devuelto": null,
+      "fecha_marcado": "2026-02-21T09:06:23.247341-05:00",
+      "fecha_apelado": null,
+      "local": "SM Usaquen",
+      "fecha": "2026-02-14"
+    },
+    {
+      "codigo": "2429122561",
+      "canal": "Rappi",
+      "delivery_id": "216523",
+      "monto_descontado": 1000.0,
+      "monto_devuelto": null,
+      "fecha_marcado": "2026-02-21T09:06:36.082507-05:00",
+      "fecha_apelado": null,
+      "local": "SM Usaquen",
+      "fecha": "2026-02-14"
+    },
+    {
+      "codigo": "2429385886",
+      "canal": "Rappi",
+      "delivery_id": "216738",
+      "monto_descontado": 38675.0,
+      "monto_devuelto": null,
+      "fecha_marcado": "2026-02-21T09:06:54.668110-05:00",
+      "fecha_apelado": null,
+      "local": "SM Usaquen",
+      "fecha": "2026-02-15"
+    },
+    {
+      "codigo": "2429387673",
+      "canal": "Rappi",
+      "delivery_id": "216741",
+      "monto_descontado": 63900.0,
+      "monto_devuelto": null,
+      "fecha_marcado": "2026-02-21T09:07:06.531373-05:00",
+      "fecha_apelado": null,
+      "local": "SM Usaquen",
+      "fecha": "2026-02-15"
+    },
+    {
+      "codigo": "2429501246",
+      "canal": "Rappi",
+      "delivery_id": "217132",
+      "monto_descontado": 9170.0,
+      "monto_devuelto": null,
+      "fecha_marcado": "2026-02-21T09:07:17.611026-05:00",
+      "fecha_apelado": null,
+      "local": "SM Usaquen",
+      "fecha": "2026-02-15"
+    },
+    {
+      "codigo": "NYK-2198",
+      "canal": "Menú Online",
+      "delivery_id": "212716",
+      "monto_descontado": 30.0,
+      "monto_devuelto": 15.0,
+      "fecha_marcado": "2026-02-21T14:00:52.492209-05:00",
+      "fecha_apelado": "2026-02-21T14:01:32.290686-05:00",
+      "local": "SM NEW JERSEY",
+      "fecha": "2026-02-08",
+      "fecha_estimada_devolucion": "2026-02-28"
+    },
+    {
+      "codigo": "UNI-2688",
+      "canal": "Menú Online",
+      "delivery_id": "212647",
+      "monto_descontado": 35.0,
+      "monto_devuelto": 20.0,
+      "fecha_marcado": "2026-02-21T14:06:19.456772-05:00",
+      "fecha_apelado": "2026-02-21T14:06:45.025577-05:00",
+      "local": "SM NEW JERSEY",
+      "fecha": "2026-02-08",
+      "fecha_estimada_devolucion": "2026-02-28",
+      "descuentos": [
+        {
+          "monto": 35.0,
+          "quincena": "2026-02-01",
+          "fecha": "2026-02-21"
+        }
+      ],
+      "descuento_confirmado": true,
+      "fecha_descuento_confirmado": "2026-02-21"
+    }
+  ]
+}

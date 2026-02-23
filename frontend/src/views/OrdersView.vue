@@ -140,6 +140,45 @@ const currentSedeId = computed(() => {
   return loc?.id ?? ''
 })
 
+// Estado extensión Didi para la sede actual (punto verde parpadeando + "Didi ext")
+const didiHasDidi = ref(false)
+const didiExtensionActive = ref<boolean | null>(null)
+let didiExtensionPollTimer: ReturnType<typeof setInterval> | null = null
+const DIDI_EXTENSION_POLL_MS = 15000
+
+async function fetchDidiExtensionStatus() {
+  const rid = currentSedeId.value
+  if (!rid) {
+    didiHasDidi.value = false
+    didiExtensionActive.value = null
+    return
+  }
+  try {
+    const r = await fetch(`${API}/didi/extension-status?restaurant_id=${encodeURIComponent(rid)}`)
+    const data = await r.json()
+    didiHasDidi.value = data.hasDidi === true
+    didiExtensionActive.value = data.active === true
+  } catch {
+    didiHasDidi.value = false
+    didiExtensionActive.value = null
+  }
+}
+
+function startDidiExtensionPoll() {
+  if (didiExtensionPollTimer) return
+  fetchDidiExtensionStatus()
+  didiExtensionPollTimer = setInterval(fetchDidiExtensionStatus, DIDI_EXTENSION_POLL_MS)
+}
+
+function stopDidiExtensionPoll() {
+  if (didiExtensionPollTimer) {
+    clearInterval(didiExtensionPollTimer)
+    didiExtensionPollTimer = null
+  }
+  didiHasDidi.value = false
+  didiExtensionActive.value = null
+}
+
 const codigoIntegracion = computed(() =>
   selectedOrder.value?.['Codigo integracion'] ?? ''
 )
@@ -163,13 +202,29 @@ interface ReportSocketStatus {
 const reportSocketStatus = ref<ReportSocketStatus | null>(null)
 const reportSocketConnected = ref(false)
 let reportWs: WebSocket | null = null
+let reportWsReconnectTimer: ReturnType<typeof setTimeout> | null = null
+const REPORT_WS_RECONNECT_MS = 3000
+
+function getReportWsUrl(): string {
+  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
+  if (API && API.trim()) {
+    try {
+      const u = new URL(API)
+      const wsProtocol = u.protocol === 'https:' ? 'wss:' : 'ws:'
+      const path = (u.pathname || '/').replace(/\/+$/, '') // quitar trailing slash
+      const base = path && path !== '/' ? path : ''
+      return `${wsProtocol}//${u.host}${base}/report/ws`
+    } catch {
+      return `${protocol}//${location.hostname}:8000/report/ws`
+    }
+  }
+  // Dev sin VITE_API_URL: asumir backend en puerto 8000
+  return `${protocol}//${location.hostname}:8000/report/ws`
+}
 
 function connectReportWs() {
-  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const baseOrigin = API ? new URL(API).origin : `${protocol}//${location.host}`
-  const wsProtocol = baseOrigin.startsWith('https') ? 'wss:' : 'ws:'
-  const wsHost = API ? new URL(API).host : location.host
-  const wsUrl = `${wsProtocol}//${wsHost}/report/ws`
+  if (reportWs?.readyState === WebSocket.OPEN) return
+  const wsUrl = getReportWsUrl()
   reportWs = new WebSocket(wsUrl)
   reportWs.onmessage = (event) => {
     try {
@@ -186,7 +241,13 @@ function connectReportWs() {
     }
   }
   reportWs.onopen = () => { reportSocketConnected.value = true }
-  reportWs.onclose = () => { reportSocketConnected.value = false }
+  reportWs.onclose = () => {
+    reportSocketConnected.value = false
+    reportWs = null
+    if (typeof window !== 'undefined') {
+      reportWsReconnectTimer = window.setTimeout(connectReportWs, REPORT_WS_RECONNECT_MS)
+    }
+  }
   reportWs.onerror = () => { reportSocketConnected.value = false }
 }
 
@@ -250,11 +311,18 @@ onMounted(async () => {
   }
   applyQueryParams()
   connectReportWs()
+  if (uploadOnly.value) loadPlanillaEstado()
 })
 
 watch([selectedLocal, selectedDate], () => {
   if (locales.value.length && (selectedLocal.value || selectedDate.value)) syncQueryToUrl()
+  if (uploadOnly.value) loadPlanillaEstado()
 }, { flush: 'post' })
+
+watch(currentSedeId, (id) => {
+  if (id) startDidiExtensionPoll()
+  else stopDidiExtensionPoll()
+}, { immediate: true })
 
 // Reporte de apelaciones (modo Reportes)
 const apelacionesReport = ref<{ total_descontado: number; total_devuelto: number; total_perdido: number } | null>(null)
@@ -281,8 +349,13 @@ async function loadApelacionesReport() {
 }
 
 onBeforeUnmount(() => {
+  stopDidiExtensionPoll()
   if (typeof window !== 'undefined') {
     window.removeEventListener('resize', updateMobile)
+    if (reportWsReconnectTimer != null) {
+      clearTimeout(reportWsReconnectTimer)
+      reportWsReconnectTimer = null
+    }
   }
   if (reportWs) {
     reportWs.close()
@@ -555,6 +628,121 @@ function fullPhotoUrl(entry: string): string {
   return base + (entry.startsWith('/') ? entry : '/' + entry)
 }
 
+// ---------------------------------------------------------------------------
+// Planilla diaria por sede
+// ---------------------------------------------------------------------------
+interface PlanillaArchivo {
+  nombre: string
+  tamanio: number
+  fecha_subida: number
+}
+interface PlanillaEstado {
+  subida: boolean
+  archivos: PlanillaArchivo[]
+}
+const planilla = ref<PlanillaEstado | null>(null)
+const loadingPlanilla = ref(false)
+const uploadingPlanilla = ref(false)
+const planillaFiles = ref<File[]>([])
+const planillaModalVisible = ref(false)
+
+async function loadPlanillaEstado() {
+  if (!currentSedeId.value || !selectedDate.value) return
+  loadingPlanilla.value = true
+  try {
+    const r = await fetch(
+      `${API}/api/planilla/${encodeURIComponent(currentSedeId.value)}/${selectedDate.value}/estado`
+    )
+    if (r.ok) planilla.value = await r.json()
+    else planilla.value = null
+  } catch {
+    planilla.value = null
+  } finally {
+    loadingPlanilla.value = false
+  }
+}
+
+function onPlanillaFileChange(e: Event) {
+  const input = e.target as HTMLInputElement
+  if (input.files?.length) {
+    planillaFiles.value = [...planillaFiles.value, ...Array.from(input.files)]
+  }
+  input.value = ''
+}
+
+function onPlanillaDropFiles(e: DragEvent) {
+  e.preventDefault()
+  const files = e.dataTransfer?.files
+  if (files?.length) {
+    planillaFiles.value = [...planillaFiles.value, ...Array.from(files)]
+  }
+}
+
+function removePlanillaFile(idx: number) {
+  planillaFiles.value = planillaFiles.value.filter((_, i) => i !== idx)
+}
+
+function clickPlanillaInput() {
+  document.getElementById('planilla-file-input')?.click()
+}
+
+function openPlanillaModal() {
+  planillaFiles.value = []
+  planillaModalVisible.value = true
+}
+
+function closePlanillaModal() {
+  planillaFiles.value = []
+  planillaModalVisible.value = false
+}
+
+async function confirmUploadPlanilla() {
+  if (!planillaFiles.value.length || !currentSedeId.value || !selectedDate.value) return
+  uploadingPlanilla.value = true
+  try {
+    for (const file of planillaFiles.value) {
+      const form = new FormData()
+      form.append('file', file)
+      await fetch(
+        `${API}/api/planilla/${encodeURIComponent(currentSedeId.value)}/${selectedDate.value}`,
+        { method: 'POST', body: form }
+      )
+    }
+    await loadPlanillaEstado()
+    closePlanillaModal()
+  } finally {
+    uploadingPlanilla.value = false
+  }
+}
+
+async function deletePlanillaArchivo(nombre: string) {
+  if (!currentSedeId.value || !selectedDate.value) return
+  await fetch(
+    `${API}/api/planilla/${encodeURIComponent(currentSedeId.value)}/${selectedDate.value}?nombre=${encodeURIComponent(nombre)}`,
+    { method: 'DELETE' }
+  )
+  await loadPlanillaEstado()
+}
+
+function formatFileSize(bytes: number | null): string {
+  if (!bytes) return ''
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+function formatTimestamp(ts: number | null): string {
+  if (!ts) return ''
+  return new Date(ts * 1000).toLocaleString('es-CO', {
+    timeZone: 'America/Bogota',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  })
+}
+
 /** Parsea un valor que puede ser número o string. Acepta "72900.00" (API) o "15.000,50" (europeo). */
 function parseMonto(val: string | number | null | undefined): number {
   if (val == null) return 0
@@ -613,6 +801,12 @@ function canalLogoUrl(canal: string | undefined): string | null {
     <Message v-else-if="!reportSocketConnected" severity="warn" class="report-status-message">
       <i class="pi pi-exclamation-triangle"></i> Desconectado del estado de la consulta automática (deliverys). Comprueba que el backend esté en marcha.
     </Message>
+
+    <!-- Indicador extensión Didi: visible en todo momento cuando la sede tiene Didi -->
+    <div v-if="didiHasDidi" class="didi-ext-indicator">
+      <span class="didi-ext-dot" :class="{ 'didi-ext-dot-active': didiExtensionActive }" aria-hidden="true"></span>
+      <span class="didi-ext-label">{{ didiExtensionActive ? 'Didi ext' : 'Didi ext inactiva' }}</span>
+    </div>
 
     <!-- Modo "Hoy" (cajeros): sede y fecha fijas por link; sin buscador superior -->
     <Card v-if="uploadOnly" class="mb-3">
@@ -728,6 +922,149 @@ function canalLogoUrl(canal: string | undefined): string | null {
       </template>
     </Card>
 
+    <!-- Planilla diaria (solo en modo Hoy) -->
+    <Card v-if="uploadOnly" class="mb-3 planilla-card">
+      <template #title>
+        <div class="flex align-items-center gap-2">
+          <i class="pi pi-file-excel"></i>
+          Planilla del día
+        </div>
+      </template>
+      <template #content>
+        <div v-if="loadingPlanilla" class="flex align-items-center gap-2">
+          <ProgressSpinner style="width:20px;height:20px" stroke-width="4" />
+          <span class="text-color-secondary">Verificando...</span>
+        </div>
+        <div v-else-if="planilla?.subida" class="planilla-subida">
+          <div class="planilla-status-row">
+            <span class="planilla-badge planilla-badge-ok">
+              <i class="pi pi-check-circle"></i> Planilla subida
+            </span>
+            <span class="text-color-secondary text-sm">
+              {{ planilla.archivos.length }} archivo{{ planilla.archivos.length !== 1 ? 's' : '' }}
+            </span>
+          </div>
+          <ul class="planilla-archivos-list">
+            <li v-for="archivo in planilla.archivos" :key="archivo.nombre" class="planilla-archivo-item">
+              <span class="text-sm text-color-secondary planilla-archivo-info">
+                <i class="pi pi-file mr-1"></i>{{ archivo.nombre }}
+                <span v-if="archivo.tamanio"> · {{ formatFileSize(archivo.tamanio) }}</span>
+                <span v-if="archivo.fecha_subida"> · {{ formatTimestamp(archivo.fecha_subida) }}</span>
+              </span>
+              <div class="flex gap-1 flex-shrink-0">
+                <a
+                  :href="`${API}/api/planilla/${encodeURIComponent(currentSedeId)}/${selectedDate}/archivo/${encodeURIComponent(archivo.nombre)}`"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="p-button p-button-secondary p-button-sm btn-touch planilla-archivo-btn"
+                  style="text-decoration:none;display:inline-flex;align-items:center;gap:.3rem"
+                >
+                  <i class="pi pi-download"></i>
+                </a>
+                <Button
+                  icon="pi pi-trash"
+                  severity="danger"
+                  size="small"
+                  text
+                  class="btn-touch planilla-archivo-btn"
+                  @click="deletePlanillaArchivo(archivo.nombre)"
+                />
+              </div>
+            </li>
+          </ul>
+          <Button
+            label="Agregar archivos"
+            icon="pi pi-upload"
+            severity="secondary"
+            size="small"
+            class="btn-touch mt-2"
+            @click="openPlanillaModal"
+          />
+        </div>
+        <div v-else class="planilla-pendiente">
+          <div class="planilla-status-row">
+            <span class="planilla-badge planilla-badge-pending">
+              <i class="pi pi-clock"></i> Planilla pendiente
+            </span>
+            <span class="text-color-secondary text-sm">No se ha subido la planilla de hoy.</span>
+          </div>
+          <Button
+            label="Subir planilla"
+            icon="pi pi-upload"
+            severity="success"
+            class="btn-touch mt-2"
+            @click="openPlanillaModal"
+          />
+        </div>
+      </template>
+    </Card>
+
+    <!-- Modal subir planilla -->
+    <Dialog
+      v-model:visible="planillaModalVisible"
+      modal
+      header="Subir planilla del día"
+      class="planilla-dialog"
+      :closable="!uploadingPlanilla"
+      @hide="closePlanillaModal"
+    >
+      <template #default>
+        <p class="text-color-secondary text-sm mt-0 mb-3">
+          Sube la planilla del día para <strong>{{ selectedLocal }}</strong> — <strong>{{ selectedDate }}</strong>.<br>
+          Puedes seleccionar varios archivos. Formatos: Excel (.xlsx, .xls), CSV, ODS, PDF o imagen. Máximo 50 MB por archivo.
+        </p>
+        <input
+          id="planilla-file-input"
+          type="file"
+          accept=".xlsx,.xls,.csv,.ods,.pdf,.png,.jpg,.jpeg,.webp"
+          multiple
+          class="file-input-hidden"
+          @change="onPlanillaFileChange"
+        />
+        <div
+          class="dropzone planilla-dropzone"
+          :class="{ 'dropzone-has-files': planillaFiles.length }"
+          role="button"
+          tabindex="0"
+          @click="clickPlanillaInput"
+          @keydown.enter="clickPlanillaInput"
+          @dragover.prevent
+          @drop="onPlanillaDropFiles"
+        >
+          <template v-if="!planillaFiles.length">
+            <i class="pi pi-file-excel dropzone-icon"></i>
+            <span class="dropzone-text">Haz clic o arrastra los archivos aquí</span>
+          </template>
+          <template v-else>
+            <ul class="planilla-selected-list" @click.stop>
+              <li v-for="(f, idx) in planillaFiles" :key="idx" class="planilla-selected-item">
+                <span class="planilla-selected-name text-sm">
+                  <i class="pi pi-file mr-1"></i>{{ f.name }}
+                  <span class="text-color-secondary"> · {{ formatFileSize(f.size) }}</span>
+                </span>
+                <Button
+                  icon="pi pi-times"
+                  text
+                  rounded
+                  size="small"
+                  severity="secondary"
+                  class="planilla-remove-btn"
+                  @click="removePlanillaFile(idx)"
+                />
+              </li>
+            </ul>
+            <span class="text-sm text-color-secondary mt-2">
+              <i class="pi pi-plus mr-1"></i>Haz clic para agregar más archivos
+            </span>
+          </template>
+        </div>
+      </template>
+      <template #footer>
+        <Button label="Cancelar" icon="pi pi-times" severity="secondary" class="btn-touch" :disabled="uploadingPlanilla" @click="closePlanillaModal" />
+        <Button label="Subir" icon="pi pi-upload" class="btn-touch" :loading="uploadingPlanilla" :disabled="!planillaFiles.length" @click="confirmUploadPlanilla" />
+      </template>
+    </Dialog>
+
     <!-- Card apelaciones (solo en Reportes) -->
     <Card v-if="reportesCajero" class="mb-3 apelaciones-report-card">
       <template #title>Apelaciones</template>
@@ -830,6 +1167,7 @@ function canalLogoUrl(canal: string | undefined): string | null {
                     icon="pi pi-camera"
                     severity="success"
                     size="small"
+                    style="min-height: 44px;"
                     rounded
                     :text="false"
                     class="btn-touch"
@@ -1065,6 +1403,53 @@ function canalLogoUrl(canal: string | undefined): string | null {
 .report-status-message {
   margin-bottom: 1rem;
 }
+
+.didi-ext-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.75rem;
+  margin-bottom: 1rem;
+  border-radius: 9999px;
+  background: var(--p-content-surface-100, #f4f4f5);
+  border: 1px solid var(--p-content-border-color, #e5e7eb);
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+.didi-ext-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--p-color-secondary, #6b7280);
+  flex-shrink: 0;
+}
+.didi-ext-dot-active {
+  background: var(--p-green-500, #22c55e);
+  animation: didi-ext-blink 1.2s ease-in-out infinite;
+}
+@keyframes didi-ext-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+.didi-ext-label {
+  color: var(--p-text-color);
+}
+
+/* Modo oscuro: indicador Didi ext / Didi ext inactiva */
+:global(.app-dark) .didi-ext-indicator {
+  background: var(--p-content-surface-200, rgba(255, 255, 255, 0.06));
+  border-color: var(--p-content-border-color, rgba(255, 255, 255, 0.12));
+}
+:global(.app-dark) .didi-ext-dot {
+  background: var(--p-color-secondary-contrast, #9ca3af);
+}
+:global(.app-dark) .didi-ext-dot-active {
+  background: var(--p-green-400, #4ade80);
+}
+:global(.app-dark) .didi-ext-label {
+  color: var(--p-text-color);
+}
+
 .apelaciones-stats {
   gap: 1rem;
 }
@@ -1323,7 +1708,6 @@ function canalLogoUrl(canal: string | undefined): string | null {
   padding-bottom: env(safe-area-inset-bottom);
 }
 .btn-touch {
-  min-height: 44px;
   min-width: 44px;
 }
 .search-row {
@@ -1348,7 +1732,7 @@ function canalLogoUrl(canal: string | undefined): string | null {
 }
 .foto-thumb .foto-delete-btn {
   min-width: 44px;
-  min-height: 44px;
+
   padding: 0;
 }
 .dropzone {
@@ -1358,7 +1742,7 @@ function canalLogoUrl(canal: string | undefined): string | null {
 }
 .upload-preview-remove {
   min-width: 44px;
-  min-height: 44px;
+
 }
 
 @media (max-width: 767px) {
@@ -1431,7 +1815,7 @@ function canalLogoUrl(canal: string | undefined): string | null {
     gap: 0.25rem;
   }
   :deep(.p-tabview-nav-link) {
-    min-height: 44px;
+  
     padding: 0.6rem 1rem;
   }
   .dropzone {
@@ -1510,6 +1894,110 @@ function canalLogoUrl(canal: string | undefined): string | null {
   }
   .table-filter-input {
     max-width: 20rem;
+  }
+}
+
+/* Planilla */
+.orders-view {
+  --planilla-ok-bg: #dcfce7;
+  --planilla-ok-fg: #15803d;
+  --planilla-pending-bg: #ffedd5;
+  --planilla-pending-fg: #c2410c;
+}
+.app-dark .orders-view {
+  --planilla-ok-bg: rgba(34, 197, 94, 0.15);
+  --planilla-ok-fg: #4ade80;
+  --planilla-pending-bg: rgba(249, 115, 22, 0.15);
+  --planilla-pending-fg: #fb923c;
+}
+.planilla-status-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1rem;
+}
+.planilla-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.3rem 0.75rem;
+  border-radius: 9999px;
+  font-weight: 600;
+  font-size: 0.875rem;
+}
+.planilla-badge-ok {
+  background: var(--planilla-ok-bg);
+  color: var(--planilla-ok-fg);
+}
+.planilla-badge-pending {
+  background: var(--planilla-pending-bg);
+  color: var(--planilla-pending-fg);
+}
+.planilla-dropzone {
+  min-height: 100px;
+}
+.planilla-archivos-list {
+  list-style: none;
+  padding: 0;
+  margin: 0.5rem 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+.planilla-archivo-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.planilla-archivo-info {
+  flex: 1;
+  min-width: 0;
+  word-break: break-word;
+}
+.planilla-archivo-btn {
+  padding: 0.25rem 0.5rem !important;
+  min-width: 0 !important;
+}
+.planilla-selected-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+.planilla-selected-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.2rem 0.4rem;
+  border-radius: 4px;
+  background: var(--p-content-hover-background, rgba(0,0,0,0.03));
+}
+.planilla-selected-name {
+  flex: 1;
+  min-width: 0;
+  word-break: break-word;
+}
+.planilla-remove-btn {
+  flex-shrink: 0;
+  width: 1.5rem !important;
+  height: 1.5rem !important;
+  padding: 0 !important;
+}
+.planilla-dialog :deep(.p-dialog) {
+  max-width: min(440px, 95vw);
+  width: 100%;
+}
+@media (max-width: 767px) {
+  .planilla-dialog :deep(.p-dialog) {
+    width: 100vw !important;
+    max-width: 100vw !important;
+    margin: 0;
+    border-radius: 0;
   }
 }
 </style>
