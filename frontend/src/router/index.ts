@@ -9,7 +9,9 @@ import MisDescuentosView from '@/views/MisDescuentosView.vue'
 import EstadoApelacionesView from '@/views/EstadoApelacionesView.vue'
 import ReporteMaestroView from '@/views/ReporteMaestroView.vue'
 import InformesView from '@/views/InformesView.vue'
+import InformesSedeView from '@/views/InformesSedeView.vue'
 import CredentialsView from '@/views/CredentialsView.vue'
+import ConfiguracionView from '@/views/ConfiguracionView.vue'
 import LinksSedesView from '@/views/LinksSedesView.vue'
 import DidiExtensionView from '@/views/DidiExtensionView.vue'
 import ExtensionesView from '@/views/ExtensionesView.vue'
@@ -101,6 +103,12 @@ const router = createRouter({
       component: InformesView,
       meta: { role: 'admin' as Role },
     },
+    {
+      path: '/pedidos/mis-informes',
+      name: 'mis-informes',
+      component: InformesSedeView,
+      meta: { role: 'user' as Role },
+    },
     { path: '/pedidos/subir', redirect: (to) => ({ name: 'hoy', query: to.query }) },
     {
       path: '/pedidos/links-sedes',
@@ -124,6 +132,12 @@ const router = createRouter({
       path: '/credenciales',
       name: 'credenciales',
       component: CredentialsView,
+      meta: { role: 'admin' as Role },
+    },
+    {
+      path: '/pedidos/configuracion',
+      name: 'configuracion',
+      component: ConfiguracionView,
       meta: { role: 'admin' as Role },
     },
     { path: '/:pathMatch(.*)', redirect: '/404' },

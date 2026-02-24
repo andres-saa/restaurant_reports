@@ -92,10 +92,17 @@ const reembolsarFechaAsDate = computed({
   set: (v: Date | null) => { reembolsarFecha.value = v ? v.toISOString().slice(0, 10) : '' }
 })
 
+const pendienteReembolso = computed(() => {
+  const item = reembolsarItem.value
+  if (!item) return 0
+  return Math.max(0, (item.monto_devuelto ?? 0) - (item.total_reembolsado ?? 0))
+})
+
 function openReembolsarDialog(item: ApelacionItem) {
   reembolsarItem.value = item
   reembolsarMismoValor.value = true
-  reembolsarMontoDiferente.value = item.monto_devuelto
+  const pendiente = Math.max(0, (item.monto_devuelto ?? 0) - (item.total_reembolsado ?? 0))
+  reembolsarMontoDiferente.value = pendiente
   reembolsarFecha.value = todayStr()
   reembolsarDialogVisible.value = true
 }
@@ -332,7 +339,11 @@ function formatMonto(val: string | number | null | undefined): string {
         <div v-if="reembolsarItem" class="mb-3">
           <p><strong>Pedido:</strong> {{ reembolsarItem.codigo }}</p>
           <p><strong>Canal:</strong> {{ reembolsarItem.canal }}</p>
-          <p><strong>Valor a devolver (marcado):</strong> {{ formatMonto(reembolsarItem.monto_devuelto) }}</p>
+          <p><strong>Total comprometido por canal:</strong> {{ formatMonto(reembolsarItem.monto_devuelto) }}</p>
+          <p v-if="(reembolsarItem.total_reembolsado ?? 0) > 0">
+            <strong>Ya recibido:</strong> {{ formatMonto(reembolsarItem.total_reembolsado) }}
+          </p>
+          <p><strong>Pendiente de recibir:</strong> <span class="text-red font-semibold">{{ formatMonto(pendienteReembolso) }}</span></p>
         </div>
         <div class="flex flex-column gap-3">
           <div>
@@ -351,7 +362,7 @@ function formatMonto(val: string | number | null | undefined): string {
               :binary="true"
               input-id="mismo-valor"
             />
-            <label for="mismo-valor">Sí nos devolvieron el valor que habíamos marcado para devolución ({{ formatMonto(reembolsarItem?.monto_devuelto) }})</label>
+            <label for="mismo-valor">Sí nos devolvieron todo lo pendiente ({{ formatMonto(pendienteReembolso) }})</label>
           </div>
           <div class="flex align-items-center gap-2">
             <Checkbox

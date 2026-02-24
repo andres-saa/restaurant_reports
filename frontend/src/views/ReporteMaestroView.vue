@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
-import Select from 'primevue/select'
+import MultiSelect from 'primevue/multiselect'
 import DatePicker from 'primevue/datepicker'
 import Button from 'primevue/button'
 import DataTable from 'primevue/datatable'
@@ -26,7 +26,6 @@ interface ReporteRow {
   has_entrega_photo: boolean
   fotos_entrega: string[]
   fotos_apelacion: Record<string, string[]>
-  fotos_respuestas: string[]
   apelacion: {
     monto_descontado?: number
     monto_devuelto?: number
@@ -35,14 +34,24 @@ interface ReporteRow {
     fecha_estimada_devolucion?: string
     reembolsado?: boolean
     fecha_reembolso?: string
+    reembolsos?: Array<{ monto: number; fecha: string }>
     descuento_confirmado?: boolean
     fecha_descuento_confirmado?: string
+    descuentos?: Array<{ monto: number; quincena?: string; fecha: string; ejecutado?: boolean }>
+    total_descuentos_sede?: number
+    total_programado?: number
+    perdida_restante?: number
+    perdida_restante_ejecutar?: number
+    monto_empresa_asume?: number
+    empresa_asume?: boolean
+    fecha_empresa_asume?: string
     fecha_marcado?: string
     sede_decidio_no_apelar?: boolean
   } | null
   estado_apelacion: string
   estados_apelacion?: string[]
   perdida: number
+  no_reconocido_canal: number
 }
 
 interface LocaleItem {
@@ -51,7 +60,7 @@ interface LocaleItem {
 }
 
 const locales = ref<LocaleItem[]>([])
-const selectedLocal = ref<string | null>(null)
+const selectedLocales = ref<string[]>([])
 const fechaDesde = ref('')
 const fechaHasta = ref('')
 const rows = ref<ReporteRow[]>([])
@@ -81,10 +90,9 @@ const fechaHastaAsDate = computed({
   set: (v: Date | null) => { fechaHasta.value = v ? v.toISOString().slice(0, 10) : '' }
 })
 
-const localeOptions = computed(() => [
-  { label: 'Todas las sedes', value: null },
-  ...locales.value.map((l) => ({ label: l.name, value: l.name }))
-])
+const localeOptions = computed(() =>
+  locales.value.map((l) => ({ label: l.name, value: l.name }))
+)
 
 
 const estadoLabels: Record<string, string> = {
@@ -120,10 +128,6 @@ function closePhoto() {
   photoModalUrl.value = null
 }
 
-function allFotosRespuestas(row: ReporteRow): string[] {
-  return row.fotos_respuestas || []
-}
-
 function allFotosApelacion(row: ReporteRow): string[] {
   const ap = row.fotos_apelacion || {}
   return Object.values(ap).flat()
@@ -138,7 +142,7 @@ async function exportExcel() {
   exportError.value = ''
   try {
     const params = new URLSearchParams()
-    if (selectedLocal.value) params.set('local', selectedLocal.value)
+    selectedLocales.value.forEach((s) => params.append('local', s))
     params.set('fecha_desde', fechaDesde.value)
     params.set('fecha_hasta', fechaHasta.value)
     if (globalFilter.value.trim()) params.set('filter', globalFilter.value.trim())
@@ -168,7 +172,7 @@ async function load(pageFirst?: number, pageRows?: number) {
   const limit = pageRows ?? pageSize.value
   try {
     const params = new URLSearchParams()
-    if (selectedLocal.value) params.set('local', selectedLocal.value)
+    selectedLocales.value.forEach((s) => params.append('local', s))
     params.set('fecha_desde', fechaDesde.value)
     params.set('fecha_hasta', fechaHasta.value)
     params.set('first', String(skip))
@@ -215,7 +219,7 @@ onMounted(async () => {
   await load()
 })
 
-watch([selectedLocal, fechaDesde, fechaHasta], () => {
+watch([selectedLocales, fechaDesde, fechaHasta], () => {
   first.value = 0
   load(0, pageSize.value)
 })
@@ -270,26 +274,53 @@ interface HistorialEvent {
   date: string
   icon: string
   color: string
+  amount?: string
+  detail?: string
 }
 function buildHistorialEvents(row: ReporteRow | null): HistorialEvent[] {
   if (!row?.apelacion) return []
   const ap = row.apelacion
   const events: HistorialEvent[] = []
-  if (ap.fecha_marcado || row.fecha) {
-    events.push({ status: 'Marcado para apelación', date: formatFechaIso(ap.fecha_marcado) || row.fecha || '—', icon: 'pi pi-flag', color: '#6366f1' })
-  }
+
   if (ap.sede_decidio_no_apelar) {
     events.push({ status: 'La sede decidió no apelar', date: '—', icon: 'pi pi-times-circle', color: '#64748b' })
   }
-  if (ap.fecha_apelado) {
-    events.push({ status: 'Apelado', date: formatFechaIso(ap.fecha_apelado), icon: 'pi pi-send', color: '#3b82f6' })
+
+  // Un evento por cada reembolso del canal
+  const reembolsos = ap.reembolsos ?? []
+  if (reembolsos.length > 0) {
+    reembolsos.forEach((r, i) => {
+      events.push({
+        status: reembolsos.length > 1 ? `Reembolso del canal #${i + 1}` : 'Reembolso del canal',
+        date: formatFechaIso(r.fecha) || '—',
+        icon: 'pi pi-wallet',
+        color: '#22c55e',
+        amount: formatMonto(r.monto),
+      })
+    })
+  } else if (ap.reembolsado || ap.fecha_reembolso) {
+    // Compatibilidad legacy sin array
+    events.push({ status: 'Reembolso del canal', date: formatFechaIso(ap.fecha_reembolso) || '—', icon: 'pi pi-wallet', color: '#22c55e', amount: ap.monto_reembolsado != null ? formatMonto(ap.monto_reembolsado) : undefined })
   }
-  if (ap.reembolsado || ap.fecha_reembolso) {
-    events.push({ status: 'Reembolsado', date: formatFechaIso(ap.fecha_reembolso), icon: 'pi pi-wallet', color: '#22c55e' })
+
+  // Un evento por cada descuento a la sede
+  const descuentos = ap.descuentos ?? []
+  if (descuentos.length > 0) {
+    descuentos.forEach((d, i) => {
+      const detail = d.quincena ? `Quincena: ${d.quincena}` : undefined
+      events.push({
+        status: descuentos.length > 1 ? `Descuento a la sede #${i + 1}` : 'Descuento a la sede',
+        date: formatFechaIso(d.fecha) || '—',
+        icon: 'pi pi-check-circle',
+        color: '#16a34a',
+        amount: formatMonto(d.monto),
+        detail,
+      })
+    })
+  } else if (ap.descuento_confirmado) {
+    events.push({ status: 'Descuento a la sede', date: formatFechaIso(ap.fecha_descuento_confirmado) || '—', icon: 'pi pi-check-circle', color: '#16a34a' })
   }
-  if (ap.descuento_confirmado) {
-    events.push({ status: 'Descontado a la sede', date: ap.fecha_descuento_confirmado || '—', icon: 'pi pi-check-circle', color: '#16a34a' })
-  }
+
   return events
 }
 const historialEvents = computed(() => buildHistorialEvents(historialRow.value))
@@ -305,16 +336,19 @@ const historialEvents = computed(() => buildHistorialEvents(historialRow.value))
         </p>
         <div class="flex flex-wrap gap-3 align-items-end mb-2">
           <div class="flex flex-column gap-2">
-            <label>Sede</label>
-            <Select
-              v-model="selectedLocal"
+            <label>Sedes</label>
+            <MultiSelect
+              v-model="selectedLocales"
               :options="localeOptions"
               option-label="label"
               option-value="value"
-              placeholder="Todas"
+              placeholder="Todas las sedes"
+              :max-selected-labels="2"
+              selected-items-label="{0} sedes seleccionadas"
               class="w-full"
               filter
               filter-placeholder="Buscar sede..."
+              display="chip"
             />
           </div>
           <div class="flex flex-column gap-2">
@@ -364,7 +398,7 @@ const historialEvents = computed(() => buildHistorialEvents(historialRow.value))
           :rows="pageSize"
           class="p-datatable-sm p-datatable-striped reporte-maestro-table"
           scrollable
-          scroll-height="600px"
+          scroll-height="60vh"
           :paginator="true"
           :rows-per-page-options="[10, 20, 50, 100]"
           paginator-template="CurrentPageReport FirstPageLink PrevPageLink PageLinks NextPageLink LastPageLink RowsPerPageDropdown"
@@ -418,63 +452,6 @@ const historialEvents = computed(() => buildHistorialEvents(historialRow.value))
               <span v-else class="text-color-secondary">—</span>
             </template>
           </Column>
-          <Column header="Respuestas" style="min-width: 80px">
-            <template #body="{ data }">
-              <div v-if="allFotosRespuestas(data).length" class="fotos-thumbs">
-                <button
-                  v-for="(url, i) in allFotosRespuestas(data).slice(0, 2)"
-                  :key="i"
-                  type="button"
-                  class="foto-thumb-btn"
-                  @click.stop="openPhoto(url)"
-                >
-                  <img :src="fullPhotoUrl(url)" alt="Respuesta" />
-                </button>
-              </div>
-              <span v-else class="text-color-secondary">—</span>
-            </template>
-          </Column>
-          <Column header="Descontado por canal" style="min-width: 110px">
-            <template #body="{ data }">{{ data.apelacion?.monto_descontado != null ? formatMonto(data.apelacion.monto_descontado) : '—' }}</template>
-          </Column>
-          <Column header="Reconocido por canal" style="min-width: 110px">
-            <template #body="{ data }">
-              <span v-if="(data.apelacion?.monto_devuelto ?? data.apelacion?.monto_reembolsado) != null && (data.apelacion?.monto_devuelto ?? data.apelacion?.monto_reembolsado) > 0" class="text-green font-semibold">{{ formatMonto(data.apelacion?.monto_reembolsado ?? data.apelacion?.monto_devuelto) }}</span>
-              <span v-else class="text-color-secondary">—</span>
-            </template>
-          </Column>
-          <Column header="Estado del reembolso" style="min-width: 120px">
-            <template #body="{ data }">
-              <Tag v-if="data.apelacion?.reembolsado" severity="success" value="Reembolsado" />
-              <Tag v-else-if="data.apelacion?.monto_devuelto != null" severity="warn" value="Pendiente" />
-              <span v-else class="text-color-secondary">—</span>
-            </template>
-          </Column>
-          <Column header="No reconocido por canal" style="min-width: 120px">
-            <template #body="{ data }">
-              <span v-if="data.perdida > 0" class="text-red font-semibold">{{ formatMonto(data.perdida) }}</span>
-              <span v-else class="text-color-secondary">—</span>
-            </template>
-          </Column>
-          <Column header="Estado del descuento a la sede" style="min-width: 160px">
-            <template #body="{ data }">
-              <Tag v-if="data.perdida > 0 && (data.apelacion?.perdida_restante ?? data.perdida) <= 0" severity="success" value="Descontado" />
-              <Tag v-else-if="data.perdida > 0" severity="warn" value="Pendiente" />
-              <span v-else class="text-color-secondary">—</span>
-            </template>
-          </Column>
-          <Column header="Descontado a la sede" style="min-width: 120px">
-            <template #body="{ data }">
-              <span v-if="(data.apelacion?.total_descuentos_sede ?? 0) > 0" class="text-green font-semibold">{{ formatMonto(data.apelacion.total_descuentos_sede) }}</span>
-              <span v-else class="text-color-secondary">—</span>
-            </template>
-          </Column>
-          <Column header="Pérdida empresa" style="min-width: 120px">
-            <template #body="{ data }">
-              <span v-if="(data.apelacion?.perdida_restante ?? data.perdida) > 0" class="text-red font-semibold">{{ formatMonto(data.apelacion?.perdida_restante ?? data.perdida) }}</span>
-              <span v-else class="text-color-secondary">—</span>
-            </template>
-          </Column>
           <Column header="Estado apelación" style="min-width: 140px">
             <template #body="{ data }">
               <div v-if="(data.estados_apelacion ?? (data.estado_apelacion ? [data.estado_apelacion] : [])).length" class="flex flex-wrap gap-1">
@@ -485,6 +462,107 @@ const historialEvents = computed(() => buildHistorialEvents(historialRow.value))
                   :value="estadoLabels[e] || e"
                 />
               </div>
+              <span v-else class="text-color-secondary">—</span>
+            </template>
+          </Column>
+
+          <!-- Reembolso -->
+          <Column header="Descontado por canal" style="min-width: 110px">
+            <template #body="{ data }">{{ data.apelacion?.monto_descontado != null ? formatMonto(data.apelacion.monto_descontado) : '—' }}</template>
+          </Column>
+          <Column header="Reconocido por canal" style="min-width: 110px">
+            <template #body="{ data }">
+              <span v-if="(data.apelacion?.monto_devuelto ?? 0) > 0" class="text-green font-semibold">{{ formatMonto(data.apelacion.monto_devuelto) }}</span>
+              <span v-else class="text-color-secondary">—</span>
+            </template>
+          </Column>
+          <Column header="No reconocido por canal" style="min-width: 120px">
+            <template #body="{ data }">
+              <span v-if="data.no_reconocido_canal > 0" class="text-red font-semibold">{{ formatMonto(data.no_reconocido_canal) }}</span>
+              <span v-else class="text-color-secondary">—</span>
+            </template>
+          </Column>
+          <Column header="Total reembolsado" style="min-width: 120px">
+            <template #body="{ data }">
+              <span v-if="(data.apelacion?.monto_reembolsado ?? 0) > 0" class="text-green font-semibold">{{ formatMonto(data.apelacion!.monto_reembolsado) }}</span>
+              <span v-else class="text-color-secondary">—</span>
+            </template>
+          </Column>
+          <Column header="Reembolsos del canal" style="min-width: 180px">
+            <template #body="{ data }">
+              <div v-if="data.apelacion?.reembolsos?.length" class="flex flex-column gap-1">
+                <div v-for="(r, i) in data.apelacion.reembolsos" :key="i" class="reembolso-chip">
+                  <i class="pi pi-wallet text-xs mr-1"></i>
+                  <span>{{ formatMonto(r.monto) }}</span>
+                  <span class="text-color-secondary ml-1 text-xs">{{ formatDate(r.fecha) }}</span>
+                </div>
+              </div>
+              <span v-else class="text-color-secondary">—</span>
+            </template>
+          </Column>
+          <Column header="Estado del reembolso" style="min-width: 120px">
+            <template #body="{ data }">
+              <Tag v-if="data.apelacion?.reembolsado" severity="success" value="Reembolsado" />
+              <Tag v-else-if="data.apelacion?.monto_devuelto != null" severity="warn" value="Pendiente" />
+              <span v-else class="text-color-secondary">—</span>
+            </template>
+          </Column>
+
+          <!-- Descuento a la sede -->
+          <Column header="Estado del descuento a la sede" style="min-width: 160px">
+            <template #body="{ data }">
+              <Tag v-if="data.perdida > 0 && (data.apelacion?.perdida_restante ?? data.perdida) <= 0" severity="success" value="Descontado" />
+              <Tag v-else-if="data.perdida > 0" severity="warn" value="Pendiente" />
+              <span v-else class="text-color-secondary">—</span>
+            </template>
+          </Column>
+          <Column header="Total programado a sede" style="min-width: 140px">
+            <template #body="{ data }">
+              <span v-if="(data.apelacion?.total_programado ?? 0) > 0" class="text-orange font-semibold">{{ formatMonto(data.apelacion!.total_programado) }}</span>
+              <span v-else class="text-color-secondary">—</span>
+            </template>
+          </Column>
+          <Column header="Quincenas" style="min-width: 220px">
+            <template #body="{ data }">
+              <div v-if="data.apelacion?.descuentos?.length" class="flex flex-column gap-1">
+                <div
+                  v-for="(d, i) in data.apelacion.descuentos"
+                  :key="i"
+                  class="quincena-chip-m"
+                  :class="d.ejecutado === false ? 'qchip-pendiente' : 'qchip-ejecutado'"
+                >
+                  <i :class="d.ejecutado === false ? 'pi pi-clock' : 'pi pi-check'" class="text-xs mr-1"></i>
+                  <span>{{ d.quincena || formatDate(d.fecha) }} — {{ formatMonto(d.monto) }}</span>
+                </div>
+              </div>
+              <span v-else class="text-color-secondary">—</span>
+            </template>
+          </Column>
+          <Column header="Descontado a la sede" style="min-width: 120px">
+            <template #body="{ data }">
+              <span v-if="(data.apelacion?.total_descuentos_sede ?? 0) > 0" class="text-green font-semibold">{{ formatMonto(data.apelacion.total_descuentos_sede) }}</span>
+              <span v-else class="text-color-secondary">—</span>
+            </template>
+          </Column>
+          <Column header="Pendiente de ejecutar" style="min-width: 140px">
+            <template #body="{ data }">
+              <span v-if="(data.apelacion?.perdida_restante_ejecutar ?? 0) > 0" class="text-red font-semibold">{{ formatMonto(data.apelacion!.perdida_restante_ejecutar) }}</span>
+              <Tag v-else-if="data.perdida > 0" severity="success" value="Ejecutado" />
+              <span v-else class="text-color-secondary">—</span>
+            </template>
+          </Column>
+          <Column header="Empresa asume" style="min-width: 130px">
+            <template #body="{ data }">
+              <div v-if="(data.apelacion?.monto_empresa_asume ?? 0) > 0" class="flex flex-column gap-1">
+                <span class="text-purple font-semibold"><i class="pi pi-building mr-1"></i>{{ formatMonto(data.apelacion!.monto_empresa_asume) }}</span>
+                <span v-if="data.apelacion?.fecha_empresa_asume" class="text-color-secondary text-xs">{{ formatDate(data.apelacion.fecha_empresa_asume) }}</span>
+              </div>
+              <span v-else class="text-color-secondary">—</span>
+            </template>
+          </Column>
+          <Column header="Pérdida empresa" style="min-width: 120px">
+            <template #body="{ data }">
+              <span v-if="(data.apelacion?.perdida_restante ?? data.perdida) > 0" class="text-red font-semibold">{{ formatMonto(data.apelacion?.perdida_restante ?? data.perdida) }}</span>
               <span v-else class="text-color-secondary">—</span>
             </template>
           </Column>
@@ -519,12 +597,16 @@ const historialEvents = computed(() => buildHistorialEvents(historialRow.value))
       <template #default>
         <div v-if="historialRow" class="historial-timeline">
           <p class="mb-3 font-semibold">{{ historialRow.codigo }} — {{ historialRow.canal }}</p>
-          <Timeline v-if="historialEvents.length" :value="historialEvents" align="alternate">
+          <Timeline v-if="historialEvents.length" :value="historialEvents" align="left">
             <template #opposite="{ item: ev }">
-              <small class="text-surface-500">{{ ev.date }}</small>
+              <small class="text-surface-500 white-space-nowrap">{{ ev.date }}</small>
             </template>
             <template #content="{ item: ev }">
-              <strong>{{ ev.status }}</strong>
+              <div class="historial-event-content">
+                <strong>{{ ev.status }}</strong>
+                <span v-if="ev.amount" class="historial-amount">{{ ev.amount }}</span>
+                <small v-if="ev.detail" class="text-surface-500">{{ ev.detail }}</small>
+              </div>
             </template>
             <template #marker="{ item: ev }">
               <span class="historial-marker" :style="{ background: ev.color }">
@@ -580,11 +662,47 @@ const historialEvents = computed(() => buildHistorialEvents(historialRow.value))
 .text-green {
   color: var(--p-green-600, #16a34a);
 }
+.text-orange {
+  color: var(--p-orange-600, #ea580c);
+}
+.text-purple {
+  color: #7c3aed;
+}
+.reembolso-chip {
+  display: inline-flex;
+  align-items: center;
+  background: #dcfce7;
+  color: #14532d;
+  border: 1px solid #bbf7d0;
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 0.78rem;
+  font-weight: 500;
+}
+.quincena-chip-m {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 500;
+}
+.qchip-pendiente {
+  background: #fef3c7;
+  color: #92400e;
+  border: 1px solid #fde68a;
+}
+.qchip-ejecutado {
+  background: #dcfce7;
+  color: #14532d;
+  border: 1px solid #bbf7d0;
+}
 .reporte-maestro-table :deep(.p-datatable-wrapper) {
-  max-height: 600px;
+  max-height: 60vh;
 }
 .historial-timeline {
   padding: 0.75rem 0.5rem;
+  min-width: 340px;
 }
 .historial-marker {
   display: flex;
@@ -594,8 +712,38 @@ const historialEvents = computed(() => buildHistorialEvents(historialRow.value))
   height: 2rem;
   border-radius: 50%;
   color: white;
+  flex-shrink: 0;
+}
+.historial-event-content {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-bottom: 0.5rem;
+}
+.historial-amount {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--p-green-600, #16a34a);
 }
 .historial-marker i {
   font-size: 0.875rem;
+}
+</style>
+
+<style>
+.app-dark .reembolso-chip {
+  background: #052e16 !important;
+  color: #86efac !important;
+  border-color: #166534 !important;
+}
+.app-dark .qchip-ejecutado {
+  background: #052e16 !important;
+  color: #86efac !important;
+  border-color: #166534 !important;
+}
+.app-dark .qchip-pendiente {
+  background: #3d2000 !important;
+  color: #fcd34d !important;
+  border-color: #78350f !important;
 }
 </style>

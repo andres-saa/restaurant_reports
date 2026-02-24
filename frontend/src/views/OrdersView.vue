@@ -39,7 +39,6 @@ interface Order {
 interface FotosByGroup {
   entrega: string[]
   apelacion: Record<string, string[]>
-  respuestas: string[]
 }
 
 interface LocaleItem {
@@ -92,10 +91,11 @@ const filterOptions = computed(() => [
   { label: 'Con foto', value: 'con_foto' as const, count: countConFoto.value, severity: 'success' as const },
   { label: 'Pendientes', value: 'pendientes' as const, count: countPendientes.value, severity: 'danger' as const }
 ])
-const fotos = ref<FotosByGroup>({ entrega: [], apelacion: {}, respuestas: [] })
+const fotos = ref<FotosByGroup>({ entrega: [], apelacion: {} })
 const searchCodigo = ref('')
 const loadingOrder = ref(false)
-const uploadGroup = ref<'entrega' | 'apelacion' | 'respuestas'>('entrega')
+const searchResults = ref<Order[]>([])
+const uploadGroup = ref<'entrega' | 'apelacion'>('entrega')
 const uploading = ref(false)
 const canalesDelivery = ref<string[]>([])
 
@@ -104,10 +104,9 @@ const uploadModalVisible = ref(false)
 const modalFiles = ref<File[]>([])
 const uploadPreviewUrls = ref<string[]>([])
 const modalDropzoneActive = ref(false)
-const uploadGroupLabels: Record<'entrega' | 'apelacion' | 'respuestas', string> = {
+const uploadGroupLabels: Record<'entrega' | 'apelacion', string> = {
   entrega: 'Fotos al entregar',
   apelacion: 'Fotos apelación',
-  respuestas: 'Respuestas del canal'
 }
 /** En móvil, si se abrió el modal desde el botón de la fila: solo cámara (no galería). */
 const isMobile = ref(false)
@@ -388,15 +387,23 @@ async function searchByCodigo() {
   if (!cod) return
   loadingOrder.value = true
   selectedOrder.value = null
-  fotos.value = { entrega: [], apelacion: {}, respuestas: [] }
+  searchResults.value = []
+  fotos.value = { entrega: [], apelacion: {} }
   try {
-    const r = await fetch(`${API}/api/orders/by-codigo/${encodeURIComponent(cod)}`)
+    const r = await fetch(`${API}/api/orders/search?q=${encodeURIComponent(cod)}`)
     const data = await r.json()
-    selectedOrder.value = data.order ?? null
-    fotos.value = data.fotos ?? { entrega: [], apelacion: {}, respuestas: [] }
+    const orders: Order[] = data.orders ?? []
+    if (orders.length === 1) {
+      selectedOrder.value = orders[0]
+      fotos.value = data.fotos ?? { entrega: [], apelacion: {} }
+      if (!data.fotos) await loadFotosForOrder(orders[0]['Codigo integracion'])
+    } else if (orders.length > 1) {
+      searchResults.value = orders
+    }
   } catch {
     selectedOrder.value = null
-    fotos.value = { entrega: [], apelacion: {}, respuestas: [] }
+    searchResults.value = []
+    fotos.value = { entrega: [], apelacion: {} }
   } finally {
     loadingOrder.value = false
   }
@@ -404,6 +411,7 @@ async function searchByCodigo() {
 
 function selectOrder(order: Order) {
   selectedOrder.value = order
+  searchResults.value = []
   loadFotosForOrder(order['Codigo integracion'])
 }
 
@@ -438,7 +446,7 @@ async function loadFotosForOrder(codigo: string) {
     const data = await r.json()
     fotos.value = data
   } catch {
-    fotos.value = { entrega: [], apelacion: {}, respuestas: [] }
+    fotos.value = { entrega: [], apelacion: {} }
   }
 }
 
@@ -451,7 +459,7 @@ async function refreshSelectedOrderAndList() {
     const data = await r.json()
     if (data.order) {
       selectedOrder.value = data.order
-      fotos.value = data.fotos ?? { entrega: [], apelacion: {}, respuestas: [] }
+      fotos.value = data.fotos ?? { entrega: [], apelacion: {} }
       const deliveryId = (data.order.delivery_id || '').trim()
       const idx = orders.value.findIndex((o: Order) => (o.delivery_id || '').trim() === deliveryId)
       if (idx !== -1) orders.value[idx] = { ...orders.value[idx], ...data.order }
@@ -508,14 +516,14 @@ function revokePreviewUrls() {
   uploadPreviewUrls.value = []
 }
 
-function openUploadModal(group: 'entrega' | 'apelacion' | 'respuestas') {
+function openUploadModal(group: 'entrega' | 'apelacion') {
   uploadGroup.value = group
   modalFiles.value = []
   revokePreviewUrls()
   uploadModalVisible.value = true
 }
 
-function openUploadModalForOrder(order: Order, group: 'entrega' | 'apelacion' | 'respuestas') {
+function openUploadModalForOrder(order: Order, group: 'entrega' | 'apelacion') {
   selectedOrder.value = order
   loadFotosForOrder(order['Codigo integracion'])
   uploadGroup.value = group
@@ -1228,7 +1236,49 @@ function canalLogoUrl(canal: string | undefined): string | null {
         </Card>
       </div>
       <div class="col-12 md:col-6">
-        <Card v-if="selectedOrder">
+        <Card v-if="searchResults.length > 1">
+          <template #title>
+            <div class="flex align-items-center gap-2">
+              <i class="pi pi-search"></i>
+              <span>{{ searchResults.length }} resultados parciales</span>
+            </div>
+          </template>
+          <template #content>
+            <p class="text-color-secondary text-sm mt-0 mb-3">
+              Se encontraron varios pedidos que coinciden con "<strong>{{ searchCodigo }}</strong>". Selecciona uno para ver el detalle.
+            </p>
+            <div class="search-results-list">
+              <button
+                v-for="order in searchResults"
+                :key="order['Codigo integracion']"
+                type="button"
+                class="search-result-item"
+                @click="selectOrder(order)"
+              >
+                <div class="flex align-items-center gap-2">
+                  <img
+                    v-if="canalLogoUrl(order['Canal de delivery'])"
+                    :src="canalLogoUrl(order['Canal de delivery'])!"
+                    :alt="order['Canal de delivery']"
+                    class="canal-logo-table"
+                  />
+                  <div class="flex flex-column align-items-start gap-1">
+                    <span class="font-medium text-sm">{{ order['Codigo integracion'] }}</span>
+                    <span class="text-color-secondary text-xs">{{ order['Canal de delivery'] }} · {{ order['Fecha'] }} {{ order['Hora'] }}</span>
+                    <span class="text-xs">{{ order['Cliente'] }} · {{ formatMonto(order['Monto pagado']) }}</span>
+                  </div>
+                  <span v-if="order.has_entrega_photo" class="order-check order-check-photo ml-auto" title="Foto de entrega cargada">
+                    <i class="pi pi-check"></i>
+                  </span>
+                  <span v-else-if="order.no_entregada" class="order-check order-check-no-entrega ml-auto" title="No entregada">
+                    <i class="pi pi-check"></i>
+                  </span>
+                </div>
+              </button>
+            </div>
+          </template>
+        </Card>
+        <Card v-else-if="selectedOrder">
           <template #title>Orden {{ selectedOrder['Codigo integracion'] }}</template>
           <template #content>
             <div class="grid mb-3 order-detail-grid">
@@ -1305,25 +1355,6 @@ function canalLogoUrl(canal: string | undefined): string | null {
                 </div>
                 <Button label="Subir fotos apelación" icon="pi pi-upload" :text="false" class="btn-touch btn-upload" @click="openUploadModal('apelacion')" />
               </TabPanel>
-              <TabPanel v-if="!uploadOnly" value="2" header="3. Respuestas del canal">
-                <div class="fotos-grid mb-2">
-                  <div v-for="url in fotos.respuestas" :key="url" class="foto-thumb">
-                    <button type="button" class="foto-link" @click="openPhotoModal(url)">
-                      <img :src="fullPhotoUrl(url)" alt="Respuesta" />
-                    </button>
-                    <Button
-                      type="button"
-                      icon="pi pi-trash"
-                      severity="danger"
-                      class="foto-delete-btn"
-                      :loading="deletingPhoto"
-                      aria-label="Eliminar foto"
-                      @click="confirmDeletePhoto(url, $event)"
-                    />
-                  </div>
-                </div>
-                <Button label="Subir respuestas" icon="pi pi-upload" :text="false" class="btn-touch btn-upload" @click="openUploadModal('respuestas')" />
-              </TabPanel>
             </TabView>
           </template>
         </Card>
@@ -1334,6 +1365,7 @@ function canalLogoUrl(canal: string | undefined): string | null {
             </p>
           </template>
         </Card>
+
       </div>
     </div>
 
@@ -1883,6 +1915,32 @@ function canalLogoUrl(canal: string | undefined): string | null {
   .table-filter-input {
     max-width: 20rem;
   }
+}
+
+/* Resultados de búsqueda parcial */
+.search-results-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  max-height: 420px;
+  overflow-y: auto;
+}
+.search-result-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--p-content-border-color);
+  border-radius: var(--p-content-border-radius, 6px);
+  background: var(--p-content-background);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+  font: inherit;
+  color: inherit;
+}
+.search-result-item:hover {
+  background: var(--p-highlight-background);
+  border-color: var(--p-primary-color);
 }
 
 /* Planilla */

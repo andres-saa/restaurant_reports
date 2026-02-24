@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import DatePicker from 'primevue/datepicker'
 import Button from 'primevue/button'
 import Card from 'primevue/card'
@@ -9,21 +10,17 @@ import ProgressSpinner from 'primevue/progressspinner'
 import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
 import Tag from 'primevue/tag'
-import MultiSelect from 'primevue/multiselect'
 import Dialog from 'primevue/dialog'
 import Checkbox from 'primevue/checkbox'
 
 const API = import.meta.env.VITE_API_URL ?? ''
+const route = useRoute()
 
-// ── Sedes ────────────────────────────────────────────────────────────────────
-interface LocaleItem { id: string; name: string }
-const locales = ref<LocaleItem[]>([])
-const selectedLocales = ref<string[]>([])
-const localeOptions = computed(() => locales.value.map((l) => ({ label: l.name, value: l.name })))
+const sede = computed(() => (route.query.sede as string) || '')
 
 // ── Métricas visibles + orden secciones (persistente en backend) ─────────────
-const STORAGE_KEY = 'informes_visible_metrics_v1'
-const PREFS_KEY = 'admin_informes_v1'
+const STORAGE_KEY = 'informes_sede_visible_v1'
+const PREFS_KEY = 'sede_informes_v1'
 
 interface VisibleMetrics {
   kpi_total_ordenes: boolean; kpi_con_problemas: boolean; kpi_sin_problemas: boolean
@@ -31,7 +28,7 @@ interface VisibleMetrics {
   kpi_reembolsadas: boolean; kpi_pendiente_reembolso: boolean; kpi_reembolso_retraso: boolean
   kpi_descontado: boolean; kpi_pendiente_descuento: boolean; kpi_descuento_retraso: boolean
   kpi_empresa_asume: boolean; kpi_perdida_neta: boolean
-  chart_por_dia: boolean; chart_por_canal: boolean; chart_pct_sede: boolean
+  chart_por_dia: boolean; chart_por_canal: boolean
   col_ordenes: boolean; col_con_problemas: boolean; col_sin_apelar: boolean
   col_apeladas: boolean; col_reembolsadas: boolean; col_pend_reembolso: boolean
   col_reembolso_retraso: boolean; col_pend_descuento: boolean; col_descuento_retraso: boolean
@@ -44,7 +41,7 @@ const DEFAULT_METRICS: VisibleMetrics = {
   kpi_reembolsadas: true, kpi_pendiente_reembolso: true, kpi_reembolso_retraso: true,
   kpi_descontado: true, kpi_pendiente_descuento: true, kpi_descuento_retraso: true,
   kpi_empresa_asume: true, kpi_perdida_neta: true,
-  chart_por_dia: true, chart_por_canal: true, chart_pct_sede: true,
+  chart_por_dia: true, chart_por_canal: true,
   col_ordenes: true, col_con_problemas: true, col_sin_apelar: true,
   col_apeladas: true, col_reembolsadas: true, col_pend_reembolso: true,
   col_reembolso_retraso: true, col_pend_descuento: true, col_descuento_retraso: true,
@@ -69,11 +66,9 @@ const sectionsOrder = ref<string[]>([...DEFAULT_SECTIONS_ORDER])
 const kpiOrders = ref<Record<string, string[]>>(cloneKpiOrders())
 const settingsOpen = ref(false)
 
-// ── Persistencia backend ──────────────────────────────────────────────────────
 let saveTimer: ReturnType<typeof setTimeout> | null = null
 
 async function loadPrefs() {
-  // 1. Fallback rápido desde localStorage
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (raw) {
@@ -84,7 +79,6 @@ async function loadPrefs() {
         kpiOrders.value = { ...cloneKpiOrders(), ...parsed.kpi_orders }
     }
   } catch {}
-  // 2. Backend (fuente de verdad)
   try {
     const r = await fetch(`${API}/api/preferencias/${PREFS_KEY}`)
     if (r.ok) {
@@ -117,17 +111,15 @@ function savePrefs() {
 watch(visible, savePrefs, { deep: true })
 watch(sectionsOrder, savePrefs, { deep: true })
 watch(kpiOrders, savePrefs, { deep: true })
-
 function resetMetrics() {
   visible.value = { ...DEFAULT_METRICS }
   sectionsOrder.value = [...DEFAULT_SECTIONS_ORDER]
   kpiOrders.value = cloneKpiOrders()
 }
 
-// ── Drag & drop de secciones ──────────────────────────────────────────────────
+// Drag & drop vertical de secciones
 const dragSrcIdx = ref(-1)
 const dragOverIdx = ref(-1)
-
 function onDragStart(idx: number, e: DragEvent) {
   dragSrcIdx.value = idx
   if (e.dataTransfer) { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', String(idx)) }
@@ -146,19 +138,14 @@ function onDrop(idx: number) {
   sectionsOrder.value = arr
   onDragEnd()
 }
-function onDragEnd() {
-  dragSrcIdx.value = -1
-  dragOverIdx.value = -1
-}
+function onDragEnd() { dragSrcIdx.value = -1; dragOverIdx.value = -1 }
 
-// ── Drag & drop horizontal de KPI cards ───────────────────────────────────────
+// Drag & drop horizontal de KPI cards
 const hSection = ref('')
 const hSrcIdx  = ref(-1)
 const hOverIdx = ref(-1)
-
 function onHDragStart(section: string, idx: number, e: DragEvent) {
-  hSection.value = section
-  hSrcIdx.value  = idx
+  hSection.value = section; hSrcIdx.value = idx
   if (e.dataTransfer) { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', `h:${section}:${idx}`) }
 }
 function onHDragOver(section: string, idx: number) {
@@ -176,101 +163,64 @@ function onHDrop(section: string, idx: number) {
 }
 function onHDragEnd() { hSection.value = ''; hSrcIdx.value = -1; hOverIdx.value = -1 }
 
-interface MetricGroup {
-  label: string
-  items: { key: keyof VisibleMetrics; label: string }[]
-}
-
+interface MetricGroup { label: string; items: { key: keyof VisibleMetrics; label: string }[] }
 const metricGroups: MetricGroup[] = [
-  {
-    label: 'KPIs — Órdenes',
-    items: [
-      { key: 'kpi_total_ordenes', label: 'Total órdenes' },
-      { key: 'kpi_con_problemas', label: 'Con problemas' },
-      { key: 'kpi_sin_problemas', label: 'Sin problemas' },
-    ],
-  },
-  {
-    label: 'KPIs — Estado apelaciones',
-    items: [
-      { key: 'kpi_sin_apelar', label: 'Sin apelar' },
-      { key: 'kpi_apeladas', label: 'Apeladas' },
-      { key: 'kpi_sede_no_apelar', label: 'Sede no apelar' },
-    ],
-  },
-  {
-    label: 'KPIs — Reembolsos',
-    items: [
-      { key: 'kpi_reembolsadas', label: 'Reembolsadas' },
-      { key: 'kpi_pendiente_reembolso', label: 'Pendiente reembolso' },
-      { key: 'kpi_reembolso_retraso', label: 'Reembolso con retraso' },
-    ],
-  },
-  {
-    label: 'KPIs — Descuentos',
-    items: [
-      { key: 'kpi_descontado', label: 'Descontado' },
-      { key: 'kpi_pendiente_descuento', label: 'Pendiente descuento' },
-      { key: 'kpi_descuento_retraso', label: 'Descuento con retraso' },
-      { key: 'kpi_empresa_asume', label: 'Empresa asume' },
-      { key: 'kpi_perdida_neta', label: 'Pérdida neta' },
-    ],
-  },
-  {
-    label: 'Gráficos',
-    items: [
-      { key: 'chart_por_dia', label: 'Problemas por día' },
-      { key: 'chart_por_canal', label: 'Pérdida por canal' },
-      { key: 'chart_pct_sede', label: '% problemas por sede' },
-    ],
-  },
-  {
-    label: 'Columnas de tabla',
-    items: [
-      { key: 'col_ordenes', label: 'Órdenes' },
-      { key: 'col_con_problemas', label: 'Con problemas' },
-      { key: 'col_sin_apelar', label: 'Sin apelar' },
-      { key: 'col_apeladas', label: 'Apeladas' },
-      { key: 'col_reembolsadas', label: 'Reembolsadas' },
-      { key: 'col_pend_reembolso', label: 'Pend. reembolso' },
-      { key: 'col_reembolso_retraso', label: 'Reembolso retraso' },
-      { key: 'col_pend_descuento', label: 'Pend. descuento' },
-      { key: 'col_descuento_retraso', label: 'Descuento retraso' },
-      { key: 'col_empresa_asume', label: 'Empresa asume' },
-      { key: 'col_perdida', label: 'Pérdida' },
-    ],
-  },
+  { label: 'KPIs — Órdenes', items: [
+    { key: 'kpi_total_ordenes', label: 'Total órdenes' },
+    { key: 'kpi_con_problemas', label: 'Con problemas' },
+    { key: 'kpi_sin_problemas', label: 'Sin problemas' },
+  ]},
+  { label: 'KPIs — Estado apelaciones', items: [
+    { key: 'kpi_sin_apelar', label: 'Sin apelar' },
+    { key: 'kpi_apeladas', label: 'Apeladas' },
+    { key: 'kpi_sede_no_apelar', label: 'Sede no apelar' },
+  ]},
+  { label: 'KPIs — Reembolsos', items: [
+    { key: 'kpi_reembolsadas', label: 'Reembolsadas' },
+    { key: 'kpi_pendiente_reembolso', label: 'Pendiente reembolso' },
+    { key: 'kpi_reembolso_retraso', label: 'Reembolso con retraso' },
+  ]},
+  { label: 'KPIs — Descuentos', items: [
+    { key: 'kpi_descontado', label: 'Descontado' },
+    { key: 'kpi_pendiente_descuento', label: 'Pendiente descuento' },
+    { key: 'kpi_descuento_retraso', label: 'Descuento con retraso' },
+    { key: 'kpi_empresa_asume', label: 'Empresa asume' },
+    { key: 'kpi_perdida_neta', label: 'Pérdida neta' },
+  ]},
+  { label: 'Gráficos', items: [
+    { key: 'chart_por_dia', label: 'Problemas por día' },
+    { key: 'chart_por_canal', label: 'Pérdida por canal' },
+  ]},
+  { label: 'Columnas de tabla', items: [
+    { key: 'col_ordenes', label: 'Órdenes' },
+    { key: 'col_con_problemas', label: 'Con problemas' },
+    { key: 'col_sin_apelar', label: 'Sin apelar' },
+    { key: 'col_apeladas', label: 'Apeladas' },
+    { key: 'col_reembolsadas', label: 'Reembolsadas' },
+    { key: 'col_pend_reembolso', label: 'Pend. reembolso' },
+    { key: 'col_reembolso_retraso', label: 'Reembolso retraso' },
+    { key: 'col_pend_descuento', label: 'Pend. descuento' },
+    { key: 'col_descuento_retraso', label: 'Descuento retraso' },
+    { key: 'col_empresa_asume', label: 'Empresa asume' },
+    { key: 'col_perdida', label: 'Pérdida' },
+  ]},
 ]
 
-// Computed: ¿hay alguna sección KPI visible?
 const anyKpiOrdenes = computed(() => visible.value.kpi_total_ordenes || visible.value.kpi_con_problemas || visible.value.kpi_sin_problemas)
 const anyKpiApelaciones = computed(() => visible.value.kpi_sin_apelar || visible.value.kpi_apeladas || visible.value.kpi_sede_no_apelar)
 const anyKpiReembolsos = computed(() => visible.value.kpi_reembolsadas || visible.value.kpi_pendiente_reembolso || visible.value.kpi_reembolso_retraso)
 const anyKpiDescuentos = computed(() => visible.value.kpi_descontado || visible.value.kpi_pendiente_descuento || visible.value.kpi_descuento_retraso || visible.value.kpi_empresa_asume || visible.value.kpi_perdida_neta)
-const anyChart = computed(() => visible.value.chart_por_dia || visible.value.chart_por_canal || visible.value.chart_pct_sede)
+const anyChart = computed(() => visible.value.chart_por_dia || visible.value.chart_por_canal)
 
-// ── Interfaces de datos ───────────────────────────────────────────────────────
+// ── Interfaces ────────────────────────────────────────────────────────────────
 interface Resumen {
-  total_ordenes: number
-  ordenes_con_apelacion: number
-  ordenes_sin_apelacion: number
-  pct_con_problemas: number
-  sin_apelar: number
-  apeladas: number
-  sede_no_apelar: number
-  total_descontado_canal: number
-  total_devuelto: number
-  total_reembolsos: number
-  pendiente_reembolso: number
-  monto_pendiente_reembolso: number
-  reembolso_retraso: number
-  total_descuentos_sede: number
-  monto_pendiente_descuento: number
-  empresa_asume: number
-  descuento_retraso: number
-  total_perdida: number
+  total_ordenes: number; ordenes_con_apelacion: number; ordenes_sin_apelacion: number; pct_con_problemas: number
+  sin_apelar: number; apeladas: number; sede_no_apelar: number
+  total_descontado_canal: number; total_devuelto: number; total_reembolsos: number
+  pendiente_reembolso: number; monto_pendiente_reembolso: number; reembolso_retraso: number
+  total_descuentos_sede: number; monto_pendiente_descuento: number; empresa_asume: number
+  descuento_retraso: number; total_perdida: number
 }
-
 interface DiaItem { fecha: string; ordenes: number; apelaciones: number; reembolsos: number; perdida: number }
 interface SedeItem {
   local: string; ordenes: number; apelaciones: number; pct_problemas: number
@@ -281,7 +231,7 @@ interface SedeItem {
 interface CanalItem { canal: string; ordenes: number; apelaciones: number; perdida: number }
 interface InformesData { resumen: Resumen; por_dia: DiaItem[]; por_sede: SedeItem[]; por_canal: CanalItem[] }
 
-// ── Estado carga ──────────────────────────────────────────────────────────────
+// ── Estado ────────────────────────────────────────────────────────────────────
 const fechaDesde = ref('')
 const fechaHasta = ref('')
 const loading = ref(false)
@@ -289,14 +239,13 @@ const error = ref('')
 const data = ref<InformesData | null>(null)
 
 const MIN_DATE = new Date(2026, 1, 11)
-function lastTwoWeeksRange(): { desde: string; hasta: string } {
+function lastTwoWeeksRange() {
   const today = new Date()
   const hasta = new Date(today.getFullYear(), today.getMonth(), today.getDate())
   const desde = new Date(hasta)
   desde.setDate(desde.getDate() - 13)
   return { desde: desde.toISOString().slice(0, 10), hasta: hasta.toISOString().slice(0, 10) }
 }
-
 const fechaDesdeAsDate = computed({
   get: () => (fechaDesde.value ? new Date(fechaDesde.value + 'T12:00:00') : null),
   set: (v: Date | null) => { fechaDesde.value = v ? v.toISOString().slice(0, 10) : '' }
@@ -306,15 +255,15 @@ const fechaHastaAsDate = computed({
   set: (v: Date | null) => { fechaHasta.value = v ? v.toISOString().slice(0, 10) : '' }
 })
 
-function formatMonto(val: number): string {
+function formatMonto(val: number) {
   return new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(val)
 }
-function formatShortDate(s: string): string {
+function formatShortDate(s: string) {
   if (!s || s.length < 10) return s
   return new Date(s + 'T12:00:00').toLocaleDateString('es-CO', { day: '2-digit', month: '2-digit' })
 }
 
-// ── Definiciones de KPI cards (renderizado data-driven) ───────────────────────
+// ── Definiciones de KPI cards ─────────────────────────────────────────────────
 interface KpiDef {
   icon: string
   bg: (r: Resumen) => string
@@ -333,7 +282,7 @@ const KPI_DEFS: Record<string, KpiDef> = {
   kpi_sin_problemas:      { icon: 'pi-check-circle',        bg: () => '#22c55e', label: 'Sin problemas',            value: (r) => r.ordenes_sin_apelacion },
   kpi_sin_apelar:         { icon: 'pi-clock',               bg: () => '#eab308', label: 'Sin apelar',               value: (r) => r.sin_apelar,                  sub: () => 'Pendiente de acción',              subClass: 'kpi-warn' },
   kpi_apeladas:           { icon: 'pi-send',                bg: () => '#3b82f6', label: 'Apeladas',                 value: (r) => r.apeladas },
-  kpi_sede_no_apelar:     { icon: 'pi-times-circle',        bg: () => '#64748b', label: 'Sede decidió no apelar',   value: (r) => r.sede_no_apelar },
+  kpi_sede_no_apelar:     { icon: 'pi-times-circle',        bg: () => '#64748b', label: 'Decidió no apelar',        value: (r) => r.sede_no_apelar },
   kpi_reembolsadas:       { icon: 'pi-wallet',              bg: () => '#16a34a', label: 'Reembolsadas',             value: (r) => r.total_reembolsos,            sub: (r) => formatMonto(r.total_devuelto),     subClass: 'kpi-ok' },
   kpi_pendiente_reembolso:{ icon: 'pi-hourglass',           bg: () => '#f97316', label: 'Pendiente por reembolsar', value: (r) => r.pendiente_reembolso,         sub: (r) => formatMonto(r.monto_pendiente_reembolso), subClass: 'kpi-warn' },
   kpi_reembolso_retraso:  { icon: 'pi-calendar-times',      bg: (r) => r.reembolso_retraso > 0 ? '#dc2626' : '#94a3b8', label: 'Reembolsos con retraso',   value: (r) => r.reembolso_retraso,           valueClass: (r) => r.reembolso_retraso > 0 ? 'text-red' : '', sub: (r) => r.reembolso_retraso > 0 ? 'Fecha est. vencida' : null, subClass: 'kpi-danger-text', danger: (r) => r.reembolso_retraso > 0 },
@@ -341,7 +290,7 @@ const KPI_DEFS: Record<string, KpiDef> = {
   kpi_pendiente_descuento:{ icon: 'pi-hourglass',           bg: () => '#f97316', label: 'Pendiente por descontar',  value: (r) => formatMonto(r.monto_pendiente_descuento), valueClass: () => 'kpi-warn' },
   kpi_descuento_retraso:  { icon: 'pi-calendar-times',      bg: (r) => r.descuento_retraso > 0 ? '#dc2626' : '#94a3b8', label: 'Descuentos con retraso',   value: (r) => r.descuento_retraso,           valueClass: (r) => r.descuento_retraso > 0 ? 'text-red' : '', sub: (r) => r.descuento_retraso > 0 ? 'Quincena vencida sin ejecutar' : null, subClass: 'kpi-danger-text', danger: (r) => r.descuento_retraso > 0 },
   kpi_empresa_asume:      { icon: 'pi-building',            bg: () => '#8b5cf6', label: 'Asumido por empresa',      value: (r) => formatMonto(r.empresa_asume),  valueStyle: 'color:#7c3aed' },
-  kpi_perdida_neta:       { icon: 'pi-exclamation-triangle',bg: () => '#dc2626', label: 'Pérdida neta empresa',     value: (r) => formatMonto(r.total_perdida),  valueClass: () => 'text-red' },
+  kpi_perdida_neta:       { icon: 'pi-exclamation-triangle',bg: () => '#dc2626', label: 'Pérdida neta',             value: (r) => formatMonto(r.total_perdida),  valueClass: () => 'text-red' },
 }
 
 function isKpiVisible(key: string): boolean {
@@ -349,14 +298,14 @@ function isKpiVisible(key: string): boolean {
 }
 
 async function load() {
-  if (!fechaDesde.value || !fechaHasta.value) return
+  if (!fechaDesde.value || !fechaHasta.value || !sede.value) return
   loading.value = true
   error.value = ''
   try {
     const params = new URLSearchParams()
     params.set('fecha_desde', fechaDesde.value)
     params.set('fecha_hasta', fechaHasta.value)
-    selectedLocales.value.forEach((s) => params.append('local', s))
+    params.append('local', sede.value)
     const r = await fetch(`${API}/api/informes?${params.toString()}`)
     if (!r.ok) throw new Error('Error al cargar informes')
     data.value = await r.json()
@@ -369,28 +318,6 @@ async function load() {
 }
 
 // ── Gráficos ──────────────────────────────────────────────────────────────────
-const chartPctProblemasData = computed(() => {
-  const d = data.value?.por_sede
-  if (!d?.length) return null
-  const sorted = [...d].sort((a, b) => b.pct_problemas - a.pct_problemas)
-  return {
-    labels: sorted.map((x) => x.local),
-    datasets: [{
-      label: '% órdenes con problemas',
-      data: sorted.map((x) => x.pct_problemas),
-      backgroundColor: sorted.map((x) =>
-        x.pct_problemas >= 10 ? 'rgba(220,38,38,0.7)' : x.pct_problemas >= 5 ? 'rgba(251,146,60,0.7)' : 'rgba(99,102,241,0.6)'
-      ),
-    }],
-  }
-})
-const chartPctOptions = ref({
-  responsive: true, maintainAspectRatio: false,
-  plugins: { legend: { display: false } },
-  scales: { x: { beginAtZero: true, max: 100, ticks: { callback: (v: number) => v + '%' } } },
-  indexAxis: 'y' as const,
-})
-
 const chartPorDiaData = computed(() => {
   const d = data.value?.por_dia
   if (!d?.length) return null
@@ -402,11 +329,7 @@ const chartPorDiaData = computed(() => {
     ],
   }
 })
-const chartPorDiaOptions = ref({
-  responsive: true, maintainAspectRatio: false,
-  plugins: { legend: { position: 'top' as const } },
-  scales: { y: { beginAtZero: true } },
-})
+const chartPorDiaOptions = ref({ responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'top' as const } }, scales: { y: { beginAtZero: true } } })
 
 const chartPorCanalData = computed(() => {
   const d = data.value?.por_canal?.filter((x) => x.perdida > 0)
@@ -417,64 +340,36 @@ const chartPorCanalData = computed(() => {
   }
 })
 
-// ── Ciclo de vida ─────────────────────────────────────────────────────────────
 onMounted(async () => {
   await loadPrefs()
-  try {
-    const r = await fetch(`${API}/report/locales`)
-    const d = await r.json()
-    locales.value = (d.locales ?? []).map((x: LocaleItem | string) =>
-      typeof x === 'object' && x && 'name' in x ? { id: (x as LocaleItem).id || '', name: (x as LocaleItem).name } : { id: '', name: String(x) }
-    )
-  } catch { locales.value = [] }
   const range = lastTwoWeeksRange()
   fechaDesde.value = range.desde
   fechaHasta.value = range.hasta
-  await load()
+  load()
 })
-
-watch([fechaDesde, fechaHasta, selectedLocales], () => {
-  if (fechaDesde.value && fechaHasta.value) load()
+watch([fechaDesde, fechaHasta, sede], () => {
+  if (fechaDesde.value && fechaHasta.value && sede.value) load()
 })
 </script>
 
 <template>
-  <div class="informes-view">
+  <div class="informes-sede-view">
     <!-- Filtros -->
     <Card class="mb-3">
       <template #title>
         <div class="flex align-items-center justify-content-between">
-          <span>Reportes</span>
-          <Button
-            icon="pi pi-sliders-h"
-            text
-            rounded
-            v-tooltip.left="'Métricas visibles'"
-            @click="settingsOpen = true"
-          />
+          <span>Reportes<span v-if="sede" class="sede-badge">{{ sede }}</span></span>
+          <Button icon="pi pi-sliders-h" text rounded v-tooltip.left="'Métricas visibles'" @click="settingsOpen = true" />
         </div>
       </template>
       <template #content>
         <p class="text-color-secondary mt-0 mb-3">
-          Indicadores de apelaciones, reembolsos y descuentos por rango de fechas.
+          Indicadores de apelaciones, reembolsos y descuentos de tu sede.
         </p>
-        <div class="flex flex-wrap gap-3 align-items-end">
-          <div class="flex flex-column gap-2">
-            <label>Sedes</label>
-            <MultiSelect
-              v-model="selectedLocales"
-              :options="localeOptions"
-              option-label="label"
-              option-value="value"
-              placeholder="Todas las sedes"
-              :max-selected-labels="2"
-              selected-items-label="{0} sedes seleccionadas"
-              style="min-width: 200px"
-              filter
-              filter-placeholder="Buscar sede..."
-              display="chip"
-            />
-          </div>
+        <div v-if="!sede" class="text-color-secondary">
+          <i class="pi pi-info-circle mr-1"></i> No hay sede seleccionada. Accede desde el menú principal.
+        </div>
+        <div v-else class="flex flex-wrap gap-3 align-items-end">
           <div class="flex flex-column gap-2">
             <label>Desde</label>
             <DatePicker v-model="fechaDesdeAsDate" :minDate="MIN_DATE" dateFormat="dd/mm/yy" showIcon />
@@ -518,7 +413,7 @@ watch([fechaDesde, fechaHasta, selectedLocales], () => {
             <span v-if="sId === 'ordenes'">Órdenes</span>
             <span v-else-if="sId === 'apelaciones'">Estado de apelaciones</span>
             <span v-else-if="sId === 'reembolsos'">Reembolsos del canal</span>
-            <span v-else-if="sId === 'descuentos'">Descuentos a sedes</span>
+            <span v-else-if="sId === 'descuentos'">Descuentos a tu sede</span>
           </div>
           <div class="kpi-row mb-3">
             <template v-for="(kId, kIdx) in kpiOrders[sId]" :key="kId">
@@ -585,34 +480,23 @@ watch([fechaDesde, fechaHasta, selectedLocales], () => {
                 </template>
               </Card>
             </div>
-            <div v-if="visible.chart_pct_sede" class="col-12">
-              <Card>
-                <template #title>% órdenes con problemas por sede</template>
-                <template #content>
-                  <div v-if="chartPctProblemasData" class="chart-container chart-horizontal"><Chart type="bar" :data="chartPctProblemasData" :options="chartPctOptions" /></div>
-                  <p v-else class="text-color-secondary">No hay datos por sede.</p>
-                </template>
-              </Card>
-            </div>
           </div>
         </template>
       </div>
 
-      <!-- Tabla por sede -->
+      <!-- Tabla detalle -->
       <Card>
-        <template #title>Detalle por sede</template>
+        <template #title>Detalle</template>
         <template #content>
           <DataTable
             :value="data.por_sede"
             class="p-datatable-sm p-datatable-striped"
             scrollable
             scroll-height="60vh"
-            sort-field="pct_problemas"
-            :sort-order="-1"
           >
-            <Column field="local" header="Sede" frozen sortable style="min-width:140px" />
-            <Column v-if="visible.col_ordenes" field="ordenes" header="Órdenes" sortable style="min-width:90px" />
-            <Column v-if="visible.col_con_problemas" field="apelaciones" header="Con problemas" sortable style="min-width:120px">
+            <Column field="local" header="Sede" frozen style="min-width:140px" />
+            <Column v-if="visible.col_ordenes" field="ordenes" header="Órdenes" style="min-width:90px" />
+            <Column v-if="visible.col_con_problemas" field="apelaciones" header="Con problemas" style="min-width:120px">
               <template #body="{ data: row }">
                 <span>{{ row.apelaciones }}</span>
                 <Tag v-if="row.pct_problemas >= 10" severity="danger" :value="row.pct_problemas + '%'" class="ml-1" />
@@ -620,55 +504,55 @@ watch([fechaDesde, fechaHasta, selectedLocales], () => {
                 <Tag v-else-if="row.pct_problemas > 0" severity="info" :value="row.pct_problemas + '%'" class="ml-1" />
               </template>
             </Column>
-            <Column v-if="visible.col_sin_apelar" field="sin_apelar" header="Sin apelar" sortable style="min-width:100px">
+            <Column v-if="visible.col_sin_apelar" field="sin_apelar" header="Sin apelar" style="min-width:100px">
               <template #body="{ data: row }">
                 <Tag v-if="row.sin_apelar > 0" severity="warn" :value="String(row.sin_apelar)" />
                 <span v-else class="text-color-secondary">—</span>
               </template>
             </Column>
-            <Column v-if="visible.col_apeladas" field="apeladas" header="Apeladas" sortable style="min-width:90px">
+            <Column v-if="visible.col_apeladas" field="apeladas" header="Apeladas" style="min-width:90px">
               <template #body="{ data: row }">
                 <span v-if="row.apeladas > 0">{{ row.apeladas }}</span>
                 <span v-else class="text-color-secondary">—</span>
               </template>
             </Column>
-            <Column v-if="visible.col_reembolsadas" field="reembolsadas" header="Reembolsadas" sortable style="min-width:110px">
+            <Column v-if="visible.col_reembolsadas" field="reembolsadas" header="Reembolsadas" style="min-width:110px">
               <template #body="{ data: row }">
                 <span v-if="row.reembolsadas > 0" class="text-green font-semibold">{{ row.reembolsadas }}</span>
                 <span v-else class="text-color-secondary">—</span>
               </template>
             </Column>
-            <Column v-if="visible.col_pend_reembolso" field="pendiente_reembolso" header="Pend. reembolso" sortable style="min-width:120px">
+            <Column v-if="visible.col_pend_reembolso" field="pendiente_reembolso" header="Pend. reembolso" style="min-width:120px">
               <template #body="{ data: row }">
                 <Tag v-if="row.pendiente_reembolso > 0" severity="warn" :value="String(row.pendiente_reembolso)" />
                 <span v-else class="text-color-secondary">—</span>
               </template>
             </Column>
-            <Column v-if="visible.col_reembolso_retraso" field="reembolso_retraso" header="Reembolso retraso" sortable style="min-width:130px">
+            <Column v-if="visible.col_reembolso_retraso" field="reembolso_retraso" header="Reembolso retraso" style="min-width:130px">
               <template #body="{ data: row }">
                 <Tag v-if="row.reembolso_retraso > 0" severity="danger" :value="String(row.reembolso_retraso)" />
                 <span v-else class="text-color-secondary">—</span>
               </template>
             </Column>
-            <Column v-if="visible.col_pend_descuento" field="pendiente_descuento" header="Pend. descuento" sortable style="min-width:130px">
+            <Column v-if="visible.col_pend_descuento" field="pendiente_descuento" header="Pend. descuento" style="min-width:130px">
               <template #body="{ data: row }">
                 <span v-if="row.pendiente_descuento > 0" class="text-warn font-semibold">{{ formatMonto(row.pendiente_descuento) }}</span>
                 <span v-else class="text-color-secondary">—</span>
               </template>
             </Column>
-            <Column v-if="visible.col_descuento_retraso" field="descuento_retraso" header="Descuento retraso" sortable style="min-width:130px">
+            <Column v-if="visible.col_descuento_retraso" field="descuento_retraso" header="Descuento retraso" style="min-width:130px">
               <template #body="{ data: row }">
                 <Tag v-if="row.descuento_retraso > 0" severity="danger" :value="String(row.descuento_retraso)" />
                 <span v-else class="text-color-secondary">—</span>
               </template>
             </Column>
-            <Column v-if="visible.col_empresa_asume" field="empresa_asume" header="Empresa asume" sortable style="min-width:120px">
+            <Column v-if="visible.col_empresa_asume" field="empresa_asume" header="Empresa asume" style="min-width:120px">
               <template #body="{ data: row }">
                 <span v-if="row.empresa_asume > 0" class="text-purple font-semibold">{{ formatMonto(row.empresa_asume) }}</span>
                 <span v-else class="text-color-secondary">—</span>
               </template>
             </Column>
-            <Column v-if="visible.col_perdida" field="perdida" header="Pérdida" sortable style="min-width:110px">
+            <Column v-if="visible.col_perdida" field="perdida" header="Pérdida" style="min-width:110px">
               <template #body="{ data: row }">
                 <span v-if="row.perdida > 0" class="text-red font-semibold">{{ formatMonto(row.perdida) }}</span>
                 <span v-else class="text-color-secondary">—</span>
@@ -679,22 +563,13 @@ watch([fechaDesde, fechaHasta, selectedLocales], () => {
       </Card>
     </template>
 
-    <!-- Dialog: configurar métricas visibles -->
-    <Dialog
-      v-model:visible="settingsOpen"
-      modal
-      header="Métricas visibles"
-      style="width: min(560px, 95vw)"
-    >
+    <!-- Dialog métricas visibles -->
+    <Dialog v-model:visible="settingsOpen" modal header="Métricas visibles" style="width: min(560px, 95vw)">
       <div class="metrics-settings">
         <div v-for="group in metricGroups" :key="group.label" class="metrics-group">
           <div class="metrics-group-header">{{ group.label }}</div>
           <div class="metrics-grid">
-            <label
-              v-for="item in group.items"
-              :key="item.key"
-              class="metric-item"
-            >
+            <label v-for="item in group.items" :key="item.key" class="metric-item">
               <Checkbox v-model="visible[item.key]" :binary="true" />
               <span>{{ item.label }}</span>
             </label>
@@ -710,68 +585,47 @@ watch([fechaDesde, fechaHasta, selectedLocales], () => {
 </template>
 
 <style scoped>
-.informes-view { padding: 0.5rem; }
-
-/* Drag & drop */
-.draggable-section {
-  border-radius: 8px;
-  transition: opacity 0.15s, box-shadow 0.15s;
-  cursor: grab;
-  user-select: none;
+.informes-sede-view { padding: 0.5rem; }
+.sede-badge {
+  display: inline-block;
+  margin-left: 0.6rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  background: var(--p-highlight-background);
+  color: var(--p-primary-color);
+  border-radius: 6px;
+  padding: 2px 8px;
+  vertical-align: middle;
 }
+.draggable-section { border-radius: 8px; transition: opacity 0.15s, box-shadow 0.15s; cursor: grab; user-select: none; }
 .draggable-section:active { cursor: grabbing; }
 .draggable-section.is-dragging { opacity: 0.4; }
-.draggable-section.drag-over-top {
-  box-shadow: 0 -3px 0 0 var(--p-primary-color, #6366f1);
-}
-.draggable-section.drag-over-bottom {
-  box-shadow: 0 3px 0 0 var(--p-primary-color, #6366f1);
-}
-
-.drag-handle-icon {
-  margin-right: 0.4rem;
-  opacity: 0.4;
-  font-size: 0.7rem;
-  cursor: grab;
-}
+.draggable-section.drag-over-top { box-shadow: 0 -3px 0 0 var(--p-primary-color, #6366f1); }
+.draggable-section.drag-over-bottom { box-shadow: 0 3px 0 0 var(--p-primary-color, #6366f1); }
+.drag-handle-icon { margin-right: 0.4rem; opacity: 0.4; font-size: 0.7rem; cursor: grab; }
 .draggable-section:hover .drag-handle-icon { opacity: 0.75; }
 
 .seccion-label {
-  font-size: 0.75rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--p-text-muted-color, #94a3b8);
-  margin-bottom: 0.5rem;
-  padding-left: 0.25rem;
-  display: flex;
-  align-items: center;
+  font-size: 0.75rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.08em; color: var(--p-text-muted-color, #94a3b8);
+  margin-bottom: 0.5rem; padding-left: 0.25rem;
+  display: flex; align-items: center;
 }
 .kpi-row { display: flex; flex-wrap: wrap; gap: 0.75rem; }
-
-/* Wrapper horizontal-draggable */
 .kpi-drag-item {
-  flex: 1 1 160px;
-  min-width: 140px;
-  cursor: grab;
-  user-select: none;
-  border-radius: 10px;
+  flex: 1 1 160px; min-width: 140px;
+  cursor: grab; user-select: none; border-radius: 10px;
   transition: opacity 0.15s, box-shadow 0.15s;
 }
 .kpi-drag-item:active { cursor: grabbing; }
 .kpi-drag-item.h-is-dragging { opacity: 0.35; }
 .kpi-drag-item.h-drag-over-left  { box-shadow: -3px 0 0 0 var(--p-primary-color, #6366f1); }
 .kpi-drag-item.h-drag-over-right { box-shadow:  3px 0 0 0 var(--p-primary-color, #6366f1); }
-
 .kpi-card { flex: unset; min-width: unset; width: 100%; }
 .kpi-card :deep(.p-card-content) { padding: 0.875rem 1rem; }
 .kpi-card.kpi-danger :deep(.p-card-body) { border-left: 3px solid #dc2626; }
 .kpi-inner { display: flex; align-items: center; gap: 0.75rem; }
-.kpi-icon {
-  width: 2.5rem; height: 2.5rem; border-radius: 10px;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 1.1rem; color: white; flex-shrink: 0;
-}
+.kpi-icon { width: 2.5rem; height: 2.5rem; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 1.1rem; color: white; flex-shrink: 0; }
 .kpi-label { font-size: 0.78rem; color: var(--p-text-muted-color, #94a3b8); line-height: 1.2; margin-bottom: 2px; }
 .kpi-value { font-size: 1.3rem; font-weight: 700; line-height: 1.1; }
 .kpi-sub { font-size: 0.75rem; margin-top: 2px; }
@@ -782,34 +636,10 @@ watch([fechaDesde, fechaHasta, selectedLocales], () => {
 .text-green { color: var(--p-green-600, #16a34a); }
 .text-purple { color: #7c3aed; }
 .text-warn { color: #f97316; }
-
 .chart-container { height: 280px; position: relative; }
-.chart-container.chart-horizontal { height: 360px; }
 .chart-container.chart-dona { height: 260px; }
-
-/* Settings dialog */
 .metrics-settings { display: flex; flex-direction: column; gap: 1.25rem; }
-.metrics-group-header {
-  font-size: 0.72rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
-  color: var(--p-text-muted-color, #94a3b8);
-  margin-bottom: 0.5rem;
-  padding-bottom: 0.25rem;
-  border-bottom: 1px solid var(--p-content-border-color, #e2e8f0);
-}
-.metrics-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-  gap: 0.5rem 1rem;
-}
-.metric-item {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  cursor: pointer;
-  font-size: 0.875rem;
-  user-select: none;
-}
+.metrics-group-header { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: var(--p-text-muted-color, #94a3b8); margin-bottom: 0.5rem; padding-bottom: 0.25rem; border-bottom: 1px solid var(--p-content-border-color, #e2e8f0); }
+.metrics-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 0.5rem 1rem; }
+.metric-item { display: flex; align-items: center; gap: 0.5rem; cursor: pointer; font-size: 0.875rem; user-select: none; }
 </style>

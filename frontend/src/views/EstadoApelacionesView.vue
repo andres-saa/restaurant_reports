@@ -25,11 +25,15 @@ interface ApelacionItem {
   fecha_marcado?: string
   fecha_apelado?: string
   fecha_reembolso?: string
+  reembolsado?: boolean
+  reembolsos?: Array<{ monto: number; fecha: string }>
   descuento_confirmado?: boolean
   fecha_descuento_confirmado?: string
-  reembolsado?: boolean
+  descuentos?: Array<{ monto: number; quincena?: string; fecha: string }>
+  total_descuentos_sede?: number
   sede_decidio_no_apelar?: boolean
   perdida: number
+  no_reconocido_canal: number
   estado: string
   estados?: string[]
 }
@@ -117,24 +121,52 @@ interface HistorialEvent {
   date: string
   icon: string
   color: string
+  amount?: string
+  detail?: string
 }
 function buildHistorialEvents(item: ApelacionItem | null): HistorialEvent[] {
   if (!item) return []
   const events: HistorialEvent[] = []
   if (item.fecha_marcado || item.fecha) {
-    events.push({ status: 'Marcado para apelación', date: formatFechaIso(item.fecha_marcado) || item.fecha || '—', icon: 'pi pi-flag', color: '#6366f1' })
+    const detail = item.monto_descontado != null ? `Descontado: ${formatMonto(item.monto_descontado)}` : undefined
+    events.push({ status: 'Marcado para apelación', date: formatFechaIso(item.fecha_marcado) || item.fecha || '—', icon: 'pi pi-flag', color: '#6366f1', detail })
   }
   if (item.sede_decidio_no_apelar) {
     events.push({ status: 'La sede decidió no apelar', date: '—', icon: 'pi pi-times-circle', color: '#64748b' })
   }
   if (item.fecha_apelado) {
-    events.push({ status: 'Apelado', date: formatFechaIso(item.fecha_apelado), icon: 'pi pi-send', color: '#3b82f6' })
+    const detail = item.monto_devuelto != null ? `Canal reconoce: ${formatMonto(item.monto_devuelto)}` : undefined
+    events.push({ status: 'Apelado', date: formatFechaIso(item.fecha_apelado), icon: 'pi pi-send', color: '#3b82f6', detail })
   }
-  if (item.reembolsado || item.fecha_reembolso) {
-    events.push({ status: 'Reembolsado', date: formatFechaIso(item.fecha_reembolso), icon: 'pi pi-wallet', color: '#22c55e' })
+  const reembolsos = item.reembolsos ?? []
+  if (reembolsos.length > 0) {
+    reembolsos.forEach((r, i) => {
+      events.push({
+        status: reembolsos.length > 1 ? `Reembolso del canal #${i + 1}` : 'Reembolso del canal',
+        date: formatFechaIso(r.fecha) || '—',
+        icon: 'pi pi-wallet',
+        color: '#22c55e',
+        amount: formatMonto(r.monto),
+      })
+    })
+  } else if (item.reembolsado || item.fecha_reembolso) {
+    events.push({ status: 'Reembolso del canal', date: formatFechaIso(item.fecha_reembolso) || '—', icon: 'pi pi-wallet', color: '#22c55e', amount: item.monto_reembolsado != null ? formatMonto(item.monto_reembolsado) : undefined })
   }
-  if (item.descuento_confirmado) {
-    events.push({ status: 'Descontado a la sede', date: item.fecha_descuento_confirmado || '—', icon: 'pi pi-check-circle', color: '#16a34a' })
+  const descuentos = item.descuentos ?? []
+  if (descuentos.length > 0) {
+    descuentos.forEach((d, i) => {
+      const detail = d.quincena ? `Quincena: ${d.quincena}` : undefined
+      events.push({
+        status: descuentos.length > 1 ? `Descuento a la sede #${i + 1}` : 'Descuento a la sede',
+        date: formatFechaIso(d.fecha) || '—',
+        icon: 'pi pi-check-circle',
+        color: '#16a34a',
+        amount: formatMonto(d.monto),
+        detail,
+      })
+    })
+  } else if (item.descuento_confirmado) {
+    events.push({ status: 'Descuento a la sede', date: formatFechaIso(item.fecha_descuento_confirmado) || '—', icon: 'pi pi-check-circle', color: '#16a34a' })
   }
   return events
 }
@@ -284,7 +316,7 @@ const countDescuento = computed(() => items.value.filter((i) => (i.estados ?? [i
           </Column>
           <Column header="No reconocido por canal">
             <template #body="{ data }">
-              <span v-if="(data.perdida ?? 0) > 0" class="text-red font-semibold">{{ formatMonto(data.perdida) }}</span>
+              <span v-if="(data.no_reconocido_canal ?? 0) > 0" class="text-red font-semibold">{{ formatMonto(data.no_reconocido_canal) }}</span>
               <span v-else>—</span>
             </template>
           </Column>
@@ -348,12 +380,16 @@ const countDescuento = computed(() => items.value.filter((i) => (i.estados ?? [i
       <template #default>
         <div v-if="historialItem" class="historial-timeline">
           <p class="mb-3 font-semibold">{{ historialItem.codigo }} — {{ historialItem.canal }}</p>
-          <Timeline v-if="historialEvents.length" :value="historialEvents" align="alternate">
+          <Timeline v-if="historialEvents.length" :value="historialEvents" align="left">
             <template #opposite="{ item: ev }">
-              <small class="text-surface-500">{{ ev.date }}</small>
+              <small class="text-surface-500 white-space-nowrap">{{ ev.date }}</small>
             </template>
             <template #content="{ item: ev }">
-              <strong>{{ ev.status }}</strong>
+              <div class="historial-event-content">
+                <strong>{{ ev.status }}</strong>
+                <span v-if="ev.amount" class="historial-amount">{{ ev.amount }}</span>
+                <small v-if="ev.detail" class="text-surface-500">{{ ev.detail }}</small>
+              </div>
             </template>
             <template #marker="{ item: ev }">
               <span class="historial-marker" :style="{ background: ev.color }">
@@ -383,6 +419,18 @@ const countDescuento = computed(() => items.value.filter((i) => (i.estados ?? [i
 }
 .historial-timeline {
   padding: 0.75rem 0.5rem;
+  min-width: 300px;
+}
+.historial-event-content {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-bottom: 0.5rem;
+}
+.historial-amount {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--p-green-600, #16a34a);
 }
 .historial-marker {
   display: flex;

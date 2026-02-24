@@ -1,0 +1,315 @@
+{
+  "items": [
+    {
+      "id": "b3bd981f-c734-4670-ae3a-945b1247c505",
+      "local": "SM Montes",
+      "tipo": "descuento_ejecutado",
+      "titulo": "Descuento aplicado en nómina",
+      "mensaje": "Se descontó $6 de tu nómina por el pedido #5764660041290419553 (Didi Food).",
+      "leida": false,
+      "fecha": "2026-02-24T09:08:41.273506-05:00",
+      "route_name": "mis-descuentos",
+      "data": {
+        "codigo": "5764660041290419553",
+        "canal": "Didi Food",
+        "monto": 6.0
+      }
+    },
+    {
+      "id": "a2062385-2879-482b-9f00-07f7f0809a38",
+      "local": "SM Montes",
+      "tipo": "descuento_ejecutado",
+      "titulo": "Descuento aplicado en nómina",
+      "mensaje": "Se descontó $6 de tu nómina por el pedido #5764660041290419553 (Didi Food).",
+      "leida": false,
+      "fecha": "2026-02-24T09:08:40.261511-05:00",
+      "route_name": "mis-descuentos",
+      "data": {
+        "codigo": "5764660041290419553",
+        "canal": "Didi Food",
+        "monto": 6.0
+      }
+    },
+    {
+      "id": "5c4fbc1c-3805-43c2-a5f2-196a9834a35f",
+      "local": "CITY U",
+      "tipo": "descuento_ejecutado",
+      "titulo": "Descuento aplicado en nómina",
+      "mensaje": "Se descontó $20.000 de tu nómina por el pedido #2431754223 (Rappi).",
+      "leida": false,
+      "fecha": "2026-02-24T09:08:39.058070-05:00",
+      "route_name": "mis-descuentos",
+      "data": {
+        "codigo": "2431754223",
+        "canal": "Rappi",
+        "monto": 20000.0
+      }
+    },
+    {
+      "id": "82bb97e9-5588-42e4-80dd-a9905b1fc1d1",
+      "local": "SM Montes",
+      "tipo": "descuento_programado",
+      "titulo": "Descuento programado",
+      "mensaje": "Se programó un descuento de $6 para la quincena 2026-03-2 (pedido #5764660041290419553).",
+      "leida": false,
+      "fecha": "2026-02-24T09:08:06.559259-05:00",
+      "route_name": "mis-descuentos",
+      "data": {
+        "codigo": "5764660041290419553",
+        "canal": "Didi Food",
+        "monto": 6.0,
+        "quincena": "2026-03-2"
+      }
+    },
+    {
+      "id": "3ffb340d-23e4-4fca-9bd8-8ce93ac74e0f",
+      "local": "SM Montes",
+      "tipo": "descuento_programado",
+      "titulo": "Descuento programado",
+      "mensaje": "Se programó un descuento de $6 para la quincena 2026-03-1 (pedido #5764660041290419553).",
+      "leida": false,
+      "fecha": "2026-02-24T09:08:06.543891-05:00",
+      "route_name": "mis-descuentos",
+      "data": {
+        "codigo": "5764660041290419553",
+        "canal": "Didi Food",
+        "monto": 6.0,
+        "quincena": "2026-03-1"
+      }
+    },
+    {
+      "id": "bd53877b-8b37-4ccb-84a5-2064e3c2b678",
+      "local": "ADMIN",
+      "tipo": "apelacion_sede",
+      "titulo": "Sede CITY U apelando",
+      "mensaje": "CITY U respondió la apelación del pedido #2431754223 (Rappi): van a devolver $12.",
+      "leida": true,
+      "fecha": "2026-02-24T08:53:25.795548-05:00",
+      "route_name": "estado-apelaciones",
+      "data": {
+        "codigo": "2431754223",
+        "local": "CITY U",
+        "canal": "Rappi",
+        "monto": 12.0
+      }
+    },
+    {
+      "id": "33997854-def7-444b-acf5-a77bf56d9222",
+      "local": "SM Montes",
+      "tipo": "descuento_programado",
+      "titulo": "Descuento programado",
+      "mensaje": "Se programó un descuento de $3 para la quincena 2026-02-2 (pedido #2431880307).",
+      "leida": true,
+      "fecha": "2026-02-23T23:15:25.296845-05:00",
+      "route_name": "mis-descuentos",
+      "data": {
+        "codigo": "2431880307",
+        "canal": "Rappi",
+        "monto": 3.0,
+        "quincena": "2026-02-2"
+      }
+    },
+    {
+      "id": "6d14ca37-2f32-4787-b982-2b6963ad44fb",
+      "local": "SM Montes",
+      "tipo": "descuento_programado",
+      "titulo": "Descuento programado",
+      "mensaje": "Se programó un descuento de $20 para la quincena 2026-02-2 (pedido #2431880307).",
+      "leida": true,
+      "fecha": "2026-02-23T23:15:25.284470-05:00",
+      "route_name": "mis-descuentos",
+      "data": {
+        "codigo": "2431880307",
+        "canal": "Rappi",
+        "monto": 20.0,
+        "quincena": "2026-02-2"
+      }
+    },
+    {
+      "id": "f5eb9860-6a07-4f5d-a1ba-7807c3981cab",
+      "local": "SM Montes",
+      "tipo": "reembolso_canal",
+      "titulo": "Reembolso del canal",
+      "mensaje": "El canal reembolsó $12 para el pedido #5764660072366017926 (Didi Food).",
+      "leida": true,
+      "fecha": "2026-02-23T23:14:54.204849-05:00",
+      "route_name": "mis-apelaciones",
+      "data": {
+        "codigo": "5764660072366017926",
+        "canal": "Didi Food",
+        "monto": 12.0
+      }
+    },
+    {
+      "id": "0cbc3910-39a8-46e3-a483-c6abaed89706",
+      "local": "SM Montes",
+      "tipo": "reembolso_canal",
+      "titulo": "Reembolso del canal",
+      "mensaje": "El canal reembolsó $12 para el pedido #5764660285776399733 (Didi Food).",
+      "leida": true,
+      "fecha": "2026-02-23T23:14:45.196627-05:00",
+      "route_name": "mis-apelaciones",
+      "data": {
+        "codigo": "5764660285776399733",
+        "canal": "Didi Food",
+        "monto": 12.0
+      }
+    },
+    {
+      "id": "5388ee94-6031-4e54-9e77-e7a2300781a3",
+      "local": "ADMIN",
+      "tipo": "apelacion_sede",
+      "titulo": "Sede SM Montes apelando",
+      "mensaje": "SM Montes respondió la apelación del pedido #5764660072366017926 (Didi Food): van a devolver $12.",
+      "leida": true,
+      "fecha": "2026-02-23T23:14:14.364560-05:00",
+      "route_name": "estado-apelaciones",
+      "data": {
+        "codigo": "5764660072366017926",
+        "local": "SM Montes",
+        "canal": "Didi Food",
+        "monto": 12.0
+      }
+    },
+    {
+      "id": "1f9312b6-e54e-4f04-aeeb-b084f3a32cfb",
+      "local": "SM Montes",
+      "tipo": "orden_por_apelar",
+      "titulo": "Pedido por apelar",
+      "mensaje": "El pedido #5764660123184205051 (Didi Food) por $122 está pendiente de apelación.",
+      "leida": true,
+      "fecha": "2026-02-23T23:14:03.556253-05:00",
+      "route_name": "apelar",
+      "data": {
+        "codigo": "5764660123184205051",
+        "canal": "Didi Food",
+        "monto": 122.0
+      }
+    },
+    {
+      "id": "ebf3bf89-ce4e-4bb7-aea4-29f1a983af08",
+      "local": "ADMIN",
+      "tipo": "apelacion_sede",
+      "titulo": "Sede SM Montes apelando",
+      "mensaje": "SM Montes respondió la apelación del pedido #5764660041290419553 (Didi Food): van a devolver $12.",
+      "leida": true,
+      "fecha": "2026-02-23T22:59:47.610571-05:00",
+      "route_name": "estado-apelaciones",
+      "data": {
+        "codigo": "5764660041290419553",
+        "local": "SM Montes",
+        "canal": "Didi Food",
+        "monto": 12.0
+      }
+    },
+    {
+      "id": "405de5c5-2093-415c-acc2-272e3e840bc4",
+      "local": "ADMIN",
+      "tipo": "planilla_subida",
+      "titulo": "Planilla subida — 5",
+      "mensaje": "La sede 5 subió la planilla del 2026-02-23: Guia_Maquina_Efectivo.pdf.",
+      "leida": true,
+      "fecha": "2026-02-23T22:54:49.444587-05:00",
+      "route_name": "planillas",
+      "data": {
+        "local_id": "5",
+        "fecha": "2026-02-23",
+        "nombre": "Guia_Maquina_Efectivo.pdf"
+      }
+    },
+    {
+      "id": "5e480340-9a68-47d6-9976-5063432d78af",
+      "local": "CITY U",
+      "tipo": "descuento_programado",
+      "titulo": "Descuento programado",
+      "mensaje": "Se programó un descuento de $12 para la quincena 2026-02-2 (pedido #2431875511).",
+      "leida": false,
+      "fecha": "2026-02-23T22:53:29.362743-05:00",
+      "route_name": "mis-descuentos",
+      "data": {
+        "codigo": "2431875511",
+        "canal": "Rappi",
+        "monto": 12.0,
+        "quincena": "2026-02-2"
+      }
+    },
+    {
+      "id": "60f82d99-6e5c-4d18-9ab8-152fbc18ee96",
+      "local": "ADMIN",
+      "tipo": "apelacion_sede",
+      "titulo": "Sede SM Montes apelando",
+      "mensaje": "SM Montes respondió la apelación del pedido #5764660285776399733 (Didi Food): van a devolver $12.",
+      "leida": true,
+      "fecha": "2026-02-23T22:52:46.003614-05:00",
+      "route_name": "estado-apelaciones",
+      "data": {
+        "codigo": "5764660285776399733",
+        "local": "SM Montes",
+        "canal": "Didi Food",
+        "monto": 12.0
+      }
+    },
+    {
+      "id": "7243478d-c95c-461b-aab9-76cf355db0b3",
+      "local": "CITY U",
+      "tipo": "orden_por_apelar",
+      "titulo": "Pedido por apelar",
+      "mensaje": "El pedido #2431875511 (Rappi) por $12 está pendiente de apelación.",
+      "leida": false,
+      "fecha": "2026-02-23T22:51:43.598517-05:00",
+      "route_name": "apelar",
+      "data": {
+        "codigo": "2431875511",
+        "canal": "Rappi",
+        "monto": 12.0
+      }
+    },
+    {
+      "id": "6515f075-6a92-4dbd-b20e-9fdb174d48aa",
+      "local": "ADMIN",
+      "tipo": "apelacion_sede",
+      "titulo": "Sede SM Montes apelando",
+      "mensaje": "SM Montes respondió la apelación del pedido #2431886246 (Rappi): van a devolver $22.",
+      "leida": true,
+      "fecha": "2026-02-23T22:51:25.899049-05:00",
+      "route_name": "estado-apelaciones",
+      "data": {
+        "codigo": "2431886246",
+        "local": "SM Montes",
+        "canal": "Rappi",
+        "monto": 22.0
+      }
+    },
+    {
+      "id": "46554bb2-5b61-4e31-a0e6-5f70bcc52f6a",
+      "local": "CITY U",
+      "tipo": "descuento_programado",
+      "titulo": "Descuento programado",
+      "mensaje": "Se programó un descuento de $20.000 para la quincena 2026-02-2 (pedido #2431754223).",
+      "leida": false,
+      "fecha": "2026-02-23T22:48:09.726056-05:00",
+      "route_name": "mis-descuentos",
+      "data": {
+        "codigo": "2431754223",
+        "canal": "Rappi",
+        "monto": 20000.0,
+        "quincena": "2026-02-2"
+      }
+    },
+    {
+      "id": "f341a804-a670-45dd-88c1-c1bccb8ce3d2",
+      "local": "SM Montes",
+      "tipo": "descuento_ejecutado",
+      "titulo": "Descuento aplicado en nómina",
+      "mensaje": "Se descontó $1.500 de tu nómina por el pedido #5764660139114172363 (Didi Food).",
+      "leida": true,
+      "fecha": "2026-02-23T22:37:46.618295-05:00",
+      "route_name": "mis-descuentos",
+      "data": {
+        "codigo": "5764660139114172363",
+        "canal": "Didi Food",
+        "monto": 1500.0
+      }
+    }
+  ]
+}

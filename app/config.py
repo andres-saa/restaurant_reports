@@ -26,3 +26,5 @@ APELACIONES_JSON = REPORTS_DIR / "apelaciones.json"  # {items: [{codigo, canal, 
 # Horarios de apertura (hora Colombia): solo se consultan órdenes dentro de este horario
 HORARIOS_JSON = REPORTS_DIR / "horarios.json"
 PLANILLAS_DIR = ROOT / "planillas"  # planillas/{local_id}/{fecha}/planilla.{ext}
+NOTIFICATIONS_JSON = REPORTS_DIR / "notificaciones.json"  # {items: [{id, local, tipo, titulo, mensaje, leida, fecha, route_name, data}]}
+PREFERENCIAS_JSON = REPORTS_DIR / "preferencias.json"  # {key: {visible:{...}, sections_order:[...]}}

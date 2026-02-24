@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
+import { useRoleStore } from '@/stores/role'
 import Select from 'primevue/select'
 import DatePicker from 'primevue/datepicker'
 import Button from 'primevue/button'
@@ -33,6 +34,9 @@ interface LocaleItem {
 }
 
 const route = useRoute()
+const roleStore = useRoleStore()
+const selectedSede = computed(() => (route.query.sede as string) || '')
+const isSede = computed(() => roleStore.isUser() && !!selectedSede.value)
 const locales = ref<LocaleItem[]>([])
 const selectedLocal = ref<string | null>(null)
 const fechaDesde = ref('')
@@ -41,7 +45,6 @@ const pendientes = ref<Order[]>([])
 const loadingPendientes = ref(false)
 const orderError = ref('')
 const MIN_DATE = new Date(2026, 1, 11)
-const selectedSede = computed(() => (route.query.sede as string) || '')
 
 function lastThirtyDaysRange(): { desde: string; hasta: string } {
   const today = new Date()
@@ -269,15 +272,17 @@ function closePhotoModal() {
       <template #title>Apelar</template>
       <template #content>
         <p class="text-color-secondary mt-0 mb-3">
-          Pedidos marcados por el admin para apelación. Sube la foto de la respuesta del canal y el valor del pedido que te van a devolver.
+          Pedidos marcados por el admin para apelación. Registra el valor que el canal va a devolver y adjunta el documento de resolución.
         </p>
         <p class="text-color-secondary mb-3">
-          Elige la sede y el rango de fechas. Las órdenes ya apeladas o marcadas como "no apelar" no aparecen en pendientes.
+          Elige el rango de fechas. Las órdenes ya apeladas o marcadas como "no apelar" no aparecen en pendientes.
         </p>
         <div class="flex flex-wrap gap-3 align-items-end mb-2">
           <div class="flex flex-column gap-2">
-            <label for="apelar-sede">Sede</label>
+            <label>Sede</label>
+            <span v-if="isSede" class="sede-label">{{ selectedLocal }}</span>
             <Select
+              v-else
               id="apelar-sede"
               v-model="selectedLocal"
               :options="localeOptions"
@@ -455,7 +460,7 @@ function closePhotoModal() {
             />
           </div>
           <div>
-            <label class="block mb-1">Foto de la respuesta del canal</label>
+            <label class="block mb-1">Documento / foto de resolución del canal</label>
             <input
               type="file"
               accept="image/*,image/heic,.heic,.heif"
@@ -490,6 +495,15 @@ function closePhotoModal() {
 <style scoped>
 .apelar-view {
   padding: 0.5rem;
+}
+.sede-label {
+  font-weight: 600;
+  padding: 0.5rem 0.75rem;
+  background: var(--p-content-hover-background);
+  border-radius: 6px;
+  border: 1px solid var(--p-content-border-color);
+  min-width: 140px;
+  display: inline-block;
 }
 .btn-touch {
   min-height: 44px;

@@ -1,0 +1,68 @@
+{
+  "admin_informes_v1": {
+    "visible": {
+      "kpi_total_ordenes": false,
+      "kpi_con_problemas": true,
+      "kpi_sin_problemas": false,
+      "kpi_sin_apelar": true,
+      "kpi_apeladas": true,
+      "kpi_sede_no_apelar": true,
+      "kpi_reembolsadas": true,
+      "kpi_pendiente_reembolso": true,
+      "kpi_reembolso_retraso": true,
+      "kpi_descontado": true,
+      "kpi_pendiente_descuento": true,
+      "kpi_descuento_retraso": true,
+      "kpi_empresa_asume": true,
+      "kpi_perdida_neta": true,
+      "chart_por_dia": true,
+      "chart_por_canal": true,
+      "chart_pct_sede": true,
+      "col_ordenes": true,
+      "col_con_problemas": true,
+      "col_sin_apelar": true,
+      "col_apeladas": true,
+      "col_reembolsadas": true,
+      "col_pend_reembolso": true,
+      "col_reembolso_retraso": true,
+      "col_pend_descuento": true,
+      "col_descuento_retraso": true,
+      "col_empresa_asume": true,
+      "col_perdida": true
+    },
+    "sections_order": [
+      "ordenes",
+      "reembolsos",
+      "apelaciones",
+      "descuentos",
+      "graficos"
+    ],
+    "kpi_orders": {
+      "ordenes": [
+        "kpi_total_ordenes",
+        "kpi_con_problemas",
+        "kpi_sin_problemas"
+      ],
+      "apelaciones": [
+        "kpi_sin_apelar",
+        "kpi_apeladas",
+        "kpi_sede_no_apelar"
+      ],
+      "reembolsos": [
+        "kpi_reembolsadas",
+        "kpi_pendiente_reembolso",
+        "kpi_reembolso_retraso"
+      ],
+      "descuentos": [
+        "kpi_descontado",
+        "kpi_pendiente_descuento",
+        "kpi_descuento_retraso",
+        "kpi_empresa_asume",
+        "kpi_perdida_neta"
+      ]
+    }
+  },
+  "app_configuracion": {
+    "dias_para_apelar": 5
+  }
+}

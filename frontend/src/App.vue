@@ -6,10 +6,24 @@ import Button from 'primevue/button'
 import Menu from 'primevue/menu'
 import ConfirmDialog from 'primevue/confirmdialog'
 import { useRoleStore } from '@/stores/role'
+import NotificationBell from '@/components/NotificationBell.vue'
+import { useNotifications, ADMIN_NOTIF_LOCAL } from '@/composables/useNotifications'
 
 const route = useRoute()
 const router = useRouter()
 const roleStore = useRoleStore()
+
+// Notificaciones: para usuarios (filtra por sede) y admin (local fijo ADMIN)
+const sedeCurrent = computed(() => (route.query.sede as string) || '')
+const sedeForNotif = computed(() => {
+  if (roleStore.isAdmin()) return ADMIN_NOTIF_LOCAL
+  if (roleStore.isUser() && sedeCurrent.value) return sedeCurrent.value
+  return ''
+})
+const showNotifBell = computed(() => !!sedeForNotif.value)
+const { init: initNotifs } = useNotifications(() => sedeForNotif.value)
+
+watch(sedeForNotif, (s) => { if (s) initNotifs(s) }, { immediate: true })
 
 type QueryKey = 'default' | 'hoy' | 'consulta' | 'role'
 interface NavItem {
@@ -24,10 +38,9 @@ interface NavItem {
 const NAV_ITEMS_USER: NavItem[] = [
   { name: 'hoy', label: 'Hoy', icon: 'pi-calendar', queryKey: 'hoy' },
   { name: 'apelar', label: 'Apelar', icon: 'pi-send', queryKey: 'default' },
-  { name: 'mis-apelaciones', label: 'Estado de mis apelaciones', icon: 'pi-list-check', queryKey: 'default' },
-  { name: 'mis-descuentos', label: 'Mis descuentos', icon: 'pi-tag', queryKey: 'default' },
-  { name: 'extensiones', label: 'Extensiones', icon: 'pi-plug', queryKey: 'default' },
-  { name: 'reportes', label: 'Reportes', icon: 'pi-chart-bar', queryKey: 'default' },
+  { name: 'mis-apelaciones', label: 'Apelaciones', icon: 'pi-list-check', queryKey: 'default' },
+  { name: 'mis-descuentos', label: 'Descuentos', icon: 'pi-tag', queryKey: 'default' },
+  { name: 'mis-informes', label: 'Reportes', icon: 'pi-chart-bar', queryKey: 'default' },
 ]
 
 const NAV_ITEMS_ADMIN: NavItem[] = [
@@ -42,6 +55,7 @@ const NAV_ITEMS_ADMIN: NavItem[] = [
   { name: 'links-sedes', label: 'Links sedes', icon: 'pi-link', queryKey: 'default' },
   { name: 'extension-didi', label: 'Ext. Didi', icon: 'pi-wifi', queryKey: 'default', logoUrl: '/logos/didi.svg' },
   { name: 'credenciales', label: 'Credenciales', icon: 'pi-key', queryKey: 'role' },
+  { name: 'configuracion', label: 'Configuración', icon: 'pi-sliders-h', queryKey: 'default' },
 ]
 
 const MAX_TOPBAR_ITEMS = 6
@@ -75,6 +89,7 @@ const navQueryHoy = computed(() => ({ ...route.query, ...roleQuery.value, fecha:
 const navQueryConsulta = computed(() => ({ ...route.query, ...roleQuery.value, fecha: todayStr() }))
 
 const isHoy = computed(() => route.name === 'hoy')
+const isMisInformes = computed(() => route.name === 'mis-informes')
 const isReportes = computed(() => route.name === 'reportes')
 const isExtensiones = computed(() => route.name === 'extensiones')
 const isApelar = computed(() => route.name === 'apelar')
@@ -91,6 +106,7 @@ const isPlanillas = computed(() => route.name === 'planillas')
 const isLinksSedes = computed(() => route.name === 'links-sedes')
 const isExtensionDidi = computed(() => route.name === 'extension-didi')
 const isCredenciales = computed(() => route.name === 'credenciales')
+const isConfiguracion = computed(() => route.name === 'configuracion')
 
 function applyTheme(isDark: boolean) {
   if (isDark) {
@@ -194,6 +210,7 @@ function openMoreMenu(e: Event) {
         />
         <Menu ref="moreMenuRef" :model="overflowMenuModel" :popup="true" />
       </nav>
+      <NotificationBell v-if="showNotifBell" :sede="sedeForNotif" />
       <SelectButton
         v-model="theme"
         :options="themeOptions"
@@ -274,6 +291,15 @@ function openMoreMenu(e: Event) {
               <span>Mis descuentos</span>
             </RouterLink>
             <RouterLink
+              :to="{ name: 'mis-informes', query: navQuery }"
+              class="app-sidebar-link"
+              :class="{ 'app-sidebar-link-active': isMisInformes }"
+              @click="closeSidebar"
+            >
+              <i class="pi pi-chart-bar"></i>
+              <span>Mis reportes</span>
+            </RouterLink>
+            <RouterLink
               :to="{ name: 'extensiones', query: navQuery }"
               class="app-sidebar-link"
               :class="{ 'app-sidebar-link-active': isExtensiones }"
@@ -288,7 +314,7 @@ function openMoreMenu(e: Event) {
               :class="{ 'app-sidebar-link-active': isReportes }"
               @click="closeSidebar"
             >
-              <i class="pi pi-chart-bar"></i>
+              <i class="pi pi-file"></i>
               <span>Reportes</span>
             </RouterLink>
           </template>
@@ -394,6 +420,9 @@ function openMoreMenu(e: Event) {
             </RouterLink>
           </template>
         </nav>
+        <div v-if="showNotifBell" class="app-sidebar-notif">
+          <NotificationBell :sede="sedeForNotif" />
+        </div>
         <div class="app-sidebar-theme">
           <span class="app-sidebar-theme-label">Tema</span>
           <SelectButton
@@ -537,7 +566,10 @@ body {
 }
 .app-nav-link-active {
   background: var(--p-highlight-background);
-  color: var(--p-primary-color);
+  color: #000;
+}
+.app-dark .app-nav-link-active {
+  color: #fff;
 }
 .app-main {
   flex: 1;
@@ -691,7 +723,15 @@ body {
   }
   .app-sidebar-link-active {
     background: var(--p-highlight-background);
-    color: var(--p-primary-color);
+    color: #000;
+  }
+  .app-dark .app-sidebar-link-active {
+    color: #fff;
+  }
+  .app-sidebar-notif {
+    display: flex;
+    align-items: center;
+    padding: 0.25rem 0;
   }
   .app-sidebar-theme {
     display: flex;
@@ -716,4 +756,5 @@ body {
   .app-title { font-size: 1.1rem; }
   .app-nav-link { padding: 0.4rem 0.75rem; min-height: 0; min-width: 0; }
 }
+
 </style>
